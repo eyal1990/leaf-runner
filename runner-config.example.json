@@ -1,0 +1,25 @@
+{
+  "maxActiveJobs": 16,
+  "attemptModels": ["terra-6.1-medium"],
+  "_comment": { "proofOnly": "Submit complete proofs or certified disproofs of the exact full target negation; prove all helpers inside the solution, with empty children/definitions. Proof: kind=proof, ready=true. Disproof: kind=counterexample, ready=false. Incomplete: kind=proof, ready=false. No sketches or unproved children." },
+  "promptVariant": "balanced",
+  "incompleteEscalation": { "after": 2, "model": "sol-6.1-high", "maxAttempts": null },
+  "missionReviewEvery": 100,
+  "missionReviewModel": "luna-6-high",
+  "verificationMode": "server-only",
+  "windowsSandboxRecovery": "protected",
+  "maxRemoteJobs": 48,
+  "recovery": {
+    "initialDelayMs": 30000,
+    "maxDelayMs": 900000,
+    "reconcileAfterMs": 600000,
+    "pendingTimeoutMs": 1800000
+  },
+  "queues": {
+    "prepare": { "maxSize": 4, "concurrency": 4 },
+    "codex": { "maxSize": 8, "concurrency": 8 },
+    "validate": { "maxSize": 1, "concurrency": 1 },
+    "server": { "maxSize": 4, "concurrency": 1 }
+  },
+  "apiConcurrency": 8
+}

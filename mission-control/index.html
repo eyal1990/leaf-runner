@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Leaf Runner Mission Control: an independently maintained local dashboard for prove2.me missions using the OpenAI Codex CLI. Not affiliated with prove2.me or OpenAI.">
+  <title>Mission Control · Leaf Runner</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to dashboard</a>
+  <div class="app-shell">
+    <div class="workspace">
+      <header class="topbar"><a class="brand" href="/" aria-label="Leaf Runner Mission Control"><span class="brand-mark" aria-hidden="true">◇</span><span>Leaf Runner</span></a><div class="connection" id="connection" role="status"><span class="dot"></span> Connecting…</div></header>
+      <main id="main" tabindex="-1"><div class="loading-state"><span class="eyebrow">Mission Control</span><h1>Connecting to your mission</h1><p>Reading the saved mission and runner state.</p></div></main>
+      <footer class="workspace-footer"><span>Leaf Runner <span class="muted">/</span> Mission Control<br>Independently maintained by eyal1990. Not affiliated with, sponsored by, or endorsed by prove2.me or OpenAI.</span><span id="timezone"></span></footer>
+    </div>
+  </div>
+  <aside id="inspector" class="inspector" aria-label="Theorem inspector" hidden></aside>
+  <dialog id="history-dialog" aria-labelledby="history-title">
+    <div class="dialog-heading"><span class="eyebrow">Saved work</span><button type="button" class="icon-button" data-close="history-dialog" aria-label="Close">×</button></div>
+    <h2 id="history-title">Previous missions</h2>
+    <p class="muted">Open a mission to inspect its saved work or resume it. One mission can run at a time.</p>
+    <label for="mission-search">Search missions</label><input id="mission-search" type="search" placeholder="Mission or milestone name" autocomplete="off">
+    <div id="mission-history" class="mission-history"></div>
+    <div class="dialog-actions"><button class="button" data-close="history-dialog">Close</button><button class="button primary" data-action="add">New mission</button></div>
+  </dialog>
+  <dialog id="add-dialog" aria-labelledby="add-title">
+    <form id="add-form">
+      <div class="dialog-heading"><span class="eyebrow">New work</span><button type="button" class="icon-button" data-close="add-dialog" aria-label="Close">×</button></div>
+      <h2 id="add-title">Set up your mission</h2><p class="muted">Choose the mission you want the runner to work on.</p>
+      <label for="mission-query">Mission name, URL, or ID</label><input id="mission-query" name="query" required maxlength="2048" placeholder="Your mission" autocomplete="off">
+      <label for="milestone">Milestone <span class="muted">optional</span></label><input id="milestone" name="milestone" maxlength="2048" placeholder="Milestone name or ID" autocomplete="off">
+      <label class="checkbox-label"><input id="start-immediately" type="checkbox" name="start" checked> Start working immediately</label>
+      <p class="form-note" id="add-note">The runner uses your current project settings and local credentials.</p>
+      <p id="add-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="button" data-close="add-dialog">Cancel</button><button class="button primary" type="submit">Set up mission</button></div>
+    </form>
+  </dialog>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-heading"><span class="eyebrow">Mission control</span><button class="icon-button" data-close="confirm-dialog" aria-label="Close">×</button></div><h2 id="confirm-title"></h2><p id="confirm-description"></p><div class="dialog-actions"><button class="button" data-close="confirm-dialog">Cancel</button><button id="confirm-submit" class="button primary">Confirm</button></div></dialog>
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <div class="dialog-heading"><span class="eyebrow">Mission settings</span><button type="button" class="icon-button" data-close="settings-dialog" aria-label="Close">×</button></div>
+    <h2 id="settings-title">Run settings</h2>
+    <form id="runtime-settings-form">
+      <p id="settings-note" class="form-note"></p>
+      <div id="settings-differences"></div>
+      <label for="prompt-variant">Prompt variant</label><select id="prompt-variant" aria-describedby="prompt-variant-note"><option value="balanced">Balanced</option><option value="proof_first">Proof first</option><option value="proofOnly">Proof only</option></select>
+      <p id="prompt-variant-note" class="form-note">Applies to new proof attempts and survives restarts. Existing attempts, continuations, and formatting repairs keep their assigned prompt.</p>
+      <fieldset id="runtime-settings"></fieldset>
+      <p id="config-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions settings-actions"><button type="button" class="button" data-close="settings-dialog">Cancel</button><button class="button primary" data-action="set-runtime-settings" type="submit">Save settings</button></div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

@@ -1,0 +1,48 @@
+{
+  "maxActiveJobs": 4,
+  "attemptModels": [
+    "luna-6-high"
+  ],
+  "_comment": {
+    "balanced": "promptVariant: balance complete proofs with decomposition into child theorems.",
+    "proof_first": "promptVariant: prioritize a complete proof, prove auxiliary lemmas in the solution file, and create child theorems only as a justified last resort.",
+    "proofOnly": "promptVariant: submit complete proofs or certified disproofs of the exact full target negation equally. Prove every helper inside the solution; children/definitions stay empty. Proof: kind=proof, ready=true. Disproof: kind=counterexample, ready=false. Incomplete: kind=proof, ready=false. No sketches or unproved children.",
+    "application": "Restart the runner after changing promptVariant. Quota continuations, resumed attempts, and formatting repairs retain their saved assignment; mission research and formatting-only prompts are unchanged."
+  },
+  "promptVariant": "balanced",
+  "incompleteEscalation": {
+    "after": 2,
+    "model": "sol-6.1-high",
+    "maxAttempts": 1
+  },
+  "missionReviewEvery": 100,
+  "missionReviewModel": "terra-6.1-medium",
+  "verificationMode": "server-only",
+  "windowsSandboxRecovery": "protected",
+  "maxRemoteJobs": 8,
+  "recovery": {
+    "initialDelayMs": 30000,
+    "maxDelayMs": 900000,
+    "reconcileAfterMs": 600000,
+    "pendingTimeoutMs": 1800000
+  },
+  "queues": {
+    "prepare": {
+      "maxSize": 2,
+      "concurrency": 2
+    },
+    "codex": {
+      "maxSize": 2,
+      "concurrency": 2
+    },
+    "validate": {
+      "maxSize": 1,
+      "concurrency": 1
+    },
+    "server": {
+      "maxSize": 4,
+      "concurrency": 1
+    }
+  },
+  "apiConcurrency": 8
+}

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/eyal1990/leaf-runner/security/advisories/new
+    about: Send vulnerability details privately to the maintainer. Do not include secrets in public issues.
