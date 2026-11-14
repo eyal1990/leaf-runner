@@ -100,6 +100,7 @@ test('MXC resource failure checks elevated readiness and shares that choice with
   assert.notEqual(logs[0], logs[1]);
   assert.match(await readFile(logs[0], 'utf8'), /0x800705AA/);
   await reviewMission({ dir: h.dir, root_id: 'root', model: 'gpt-6-luna' }, h.options, {
+    platform: h.hooks.platform,
     command: async (_exe, args) => {
       assert.ok(args.includes('windows.sandbox=elevated'));
       await writeFile(args[args.indexOf('--output-last-message') + 1], '{}');
@@ -133,6 +134,7 @@ test('persistent Windows setup failure recovers with the enabled fallback only a
   assert.equal(report.status, 'RECOVERED'); assert.equal(report.sandbox_mode, 'unelevated');
   t.mock.method(codexSandboxRecovery, 'mode', options => h.hooks.sandboxRecovery.mode(options));
   await reviewMission({ dir: h.dir, root_id: 'root', model: 'gpt-6-luna' }, h.options, {
+    platform: h.hooks.platform,
     command: async (_exe, args) => {
       assert.ok(args.includes('windows.sandbox=unelevated'));
       await writeFile(args[args.indexOf('--output-last-message') + 1], '{}');

@@ -719,7 +719,8 @@ export async function reviewMission(request, options, hooks = {}) {
   await writeFile(join(request.dir, `prompt-${invocation}.txt`), prompt);
   const args = ['-a', 'never', 'exec', '--json', '--sandbox', 'read-only', '--cd', request.dir,
     '--skip-git-repo-check', '--color', 'never', '--output-schema', schema, '--output-last-message', answer,
-    '--model', request.model ?? REVIEW_MODEL, '--config', `model_reasoning_effort="${request.reasoningEffort ?? 'high'}"`, ...agentEnvironmentConfig(request.dir, options), '-'];
+    '--model', request.model ?? REVIEW_MODEL, '--config', `model_reasoning_effort="${request.reasoningEffort ?? 'high'}"`,
+    ...agentEnvironmentConfig(request.dir, options, hooks.platform ?? process.platform), '-'];
   options.assertModelSlot?.();
   try {
     await (hooks.command ?? command)(options.codex, args, { cwd: request.dir, log, input: prompt,
