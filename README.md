@@ -6,6 +6,9 @@ certificates, and submits them for verification. **Mission Control**, its local
 browser dashboard, is the easiest way to start, monitor, and resume work.
 Automation does not guarantee a proof; Prove2.me remains the authority on results.
 
+## Demo
+https://github.com/user-attachments/assets/98f99a80-a49b-4450-bda5-1ec9e9dc7602
+
 ![Mission Control showing an example mission, theorem queues, open frontier, and capacity](docs/assets/mission-control.png)
 
 *The dashboard above uses synthetic example data, with no account or mission information.*
