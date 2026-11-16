@@ -252,6 +252,28 @@ and Windows sandbox policy are file settings, not controls in this dialog.
 [Configuration](configuration.md) covers these without requiring a long command
 line. Missions sharing a file share its saved settings.
 
+## Sharing a problem without a hosted server
+
+When a mission fails or needs attention, **Report a problem** prepares diagnostics
+on the user's computer. The dialog previews an editable `leaf-runner-diagnostics.txt`
+file containing the selected mission's checkpoint and job state from `.runs`, saved
+and effective settings, app revision, Node/OS versions, and recent log excerpts.
+It includes at most 40 jobs (failures first), eight logs, and the last 32 KiB of
+each log. Other missions, credentials files, source files, and prompts are excluded.
+This is a diagnostic extract, not a restorable `.runs` backup.
+
+Known credentials, credential fields, and the current home directory are redacted.
+Logs may still contain private mission data: review and edit the preview, then
+choose **Download diagnostics**. **Open GitHub issue** opens a draft with generic
+reproduction questions. Attach the reviewed file manually and submit the issue.
+Nothing is uploaded automatically and no credentials or diagnostics go into the
+GitHub URL. GitHub sign-in and repository issue access are required to submit;
+issues and attachments may be public. For private data or users without GitHub,
+send the downloaded file to the maintainer through an agreed private channel.
+
+The authenticated local Mission Control server prepares the file. There is no
+hosted ingestion service, embedded maintainer token, or additional dependency.
+
 ## Connection and keyboard navigation
 
 The top connection indicator reports whether the browser can read the local

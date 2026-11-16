@@ -527,8 +527,8 @@ console.log('RUNNER_ENVIRONMENT_READY');
     const encoded = Buffer.from(`& ${quote(process.execPath)} ${quote(script)}; exit $LASTEXITCODE`, 'utf16le').toString('base64');
     shell = [join(process.env.SystemRoot ?? 'C:/Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'), '-NoProfile', '-EncodedCommand', encoded];
   }
-  // 0.162.1 exposes the Windows command directly under `sandbox`.
-  const sandbox = platform === 'win32' ? [] : [platform === 'darwin' ? 'macos' : 'linux'];
+  // Codex 0.162.1 selects the host sandbox automatically on every platform.
+  // Legacy `linux`/`macos` subcommands are interpreted as programs to execute.
   for (let retry = 0; retry < 3; retry++) {
     const mode = windowsSandboxMode(options);
     const config = agentEnvironmentConfig(dir, options, platform, workspace);
@@ -539,7 +539,7 @@ console.log('RUNNER_ENVIRONMENT_READY');
       const label = `[${idOf(target)}] ${remoteVerification ? 'Sandbox' : 'Lean'} readiness (no model request)`;
       const probe = async (exe = options.codex, probeLog = log, modeOverride) => {
         const probeConfig = modeOverride ? agentEnvironmentConfig(dir, { ...options, windowsSandbox: modeOverride }, platform, workspace) : config;
-        await run(exe, [...probeConfig, '--config', 'sandbox_mode="workspace-write"', 'sandbox', ...sandbox, '--', ...shell], {
+        await run(exe, [...probeConfig, '--config', 'sandbox_mode="workspace-write"', 'sandbox', '--', ...shell], {
           cwd: workspace, log: probeLog, timeout: (options.leanTimeout ?? 3600) * 1000, signal: options.signal, label, showOutput: true,
         });
         if (!(await readFile(probeLog, 'utf8')).includes('RUNNER_ENVIRONMENT_READY')) throw new Error('Sandbox did not complete the readiness check');

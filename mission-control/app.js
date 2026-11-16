@@ -26,6 +26,7 @@ const ui = { missionId: params.get('mission') || null, tab: params.get('tab') ||
 let state, csrf, busy = false, connected = false, refreshedAt = 0, toastTimer, inspectorKey, previousFocus;
 let confirmAction, fetching, artifactTimer, settingsScope;
 let credentialsScope, pendingCredentialStart;
+let supportFilename = 'leaf-runner-diagnostics.txt';
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 $('#timezone').textContent = timezone;
 const fmtDate = value => value ? new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Not observed';
@@ -203,12 +204,17 @@ function missionPage(view) {
   const diagnostic = (savedInterruption ? null : m.error) || (live ? currentSummary?.error : s?.status !== 'INTERRUPTED' && s?.error);
   const credentialFailure = !live && /ENOENT.*credentials.*\.json|Prove2\.me API key required|Fill in api_key/i.test(diagnostic ?? '');
   const error = credentialFailure ? null : diagnostic;
+  const reportable = error || m.processStatus === 'ERROR' || !live && s?.status === 'ERROR' || currentSummary?.api_recovery?.waiting ||
+    currentSummary?.proof_storage_recovery?.waiting || currentSummary?.mission_research?.last_error ||
+    view.jobs.some(job => job.job_status === 'NEEDS_ATTENTION' || ['ERROR', 'FAILED'].includes(job.status) ||
+      job.waiting_reason && job.failure);
   const waitingQuota = currentSummary?.codex_quota?.status === 'WAITING';
   const banner = error || currentSummary?.api_recovery?.waiting || waitingQuota || !m.managed && live || !live && s?.status === 'RUNNING';
   return `<div class="page-heading"><div><p class="eyebrow heading-kicker">${esc(m.target?.kind === 'milestone' ? 'Mission / milestone' : 'Proof mission')}</p><div class="heading-title"><h1>${esc(missionTitle(m))}</h1>${badge(agentsStopped && live ? 'Agents stopped' : paused && live ? 'Admission paused' : processLabel(m), live ? 'live' : error ? 'error' : '')}</div><p class="subtitle">Root ${esc((s?.root_status ?? 'unobserved').toLowerCase())}<span class="separator">·</span>${esc(s?.limits?.verificationMode === 'server-only' ? 'Server-only verification' : s?.limits?.verificationMode === 'local' ? 'Local verification' : 'Verification mode available on start')}<span class="separator">·</span>${live ? `Running ${age(s?.started_at ?? m.startedAt)}` : s?.finished_at ? `Saved ${fmtDate(s.finished_at)}` : 'Ready when you are'}</p></div>
     <div class="header-actions">${controlled ? `<button class="button outline-teal" data-action="${agentsStopped ? 'resume-agents' : 'stop-agents'}">${icon(agentsStopped ? 'play' : 'stop')} ${agentsStopped ? 'Resume agents' : 'Stop agents'}</button>` : !live ? `<button class="button primary" data-action="start" ${startBlocked ? 'disabled title="Stop and save the current runner before starting."' : ''}>${icon('play')} ${s ? 'Start saved run' : 'Start mission'}</button>` : ''}<button class="button" data-action="settings">${icon('settings')} Run settings</button><button class="button icon-only" data-action="refresh" aria-label="Refresh status" title="Refresh saved status">${icon('refresh')}</button><div class="menu-wrap"><button class="button icon-only" data-action="menu" aria-label="Mission actions" aria-expanded="false">${icon('more')}</button><div class="overflow-menu" id="mission-menu" hidden>${controlled ? `<button data-action="${paused ? 'resume-admission' : 'pause-admission'}">${icon(paused ? 'play' : 'pause')} ${paused ? 'Resume new work' : 'Pause new work'}</button><button data-action="${s?.operator?.dispatchPaused ? 'resume-dispatch' : 'pause-dispatch'}">${icon(s?.operator?.dispatchPaused ? 'play' : 'pause')} ${s?.operator?.dispatchPaused ? 'Resume Codex dispatch' : 'Pause Codex dispatch'}</button>` : ''}<a href="/api/export?${queryForState()}">${icon('export')} Export report</a>${live && m.managed ? `<button class="danger" data-action="stop">${icon('pause')} Stop and save</button>` : ''}</div></div></div></div>
     <div class="toolbar"><span class="muted">Controls apply to <strong>${esc(m.name)}</strong>${m.target?.root ? ` · <a href="https://prove2.me/theorems/${encodeURIComponent(m.target.root)}" target="_blank" rel="noreferrer">Exact root ↗</a>` : ''}</span>${rangeControl()}</div>${customControl()}
     ${banner ? `<div class="banner"><span class="banner-icon">!</span><div><strong>${esc(waitingQuota ? 'Codex waiting for account limits. Submitted work continues.' : !m.managed && live ? 'Monitoring a runner started outside Mission Control' : !live && s?.status === 'RUNNING' ? 'The saved checkpoint says running; no live process is connected' : error ? `${live ? '' : 'Previous run failed: '}${error}` : 'Waiting for shared API recovery')}</strong><p>${waitingQuota ? `Next availability check ${fmtDate(s.codex_quota.next_check_at)}. ${s.codex_quota.last_check_error ? esc(s.codex_quota.last_check_error) : 'Recovery is automatic. You can check immediately after an early reset.'}` : !m.managed && live ? 'Use its console to stop it. Start it here afterward to enable managed controls.' : 'Saved work and remote-operation identities are preserved. Inspect the details before restarting.'}</p></div></div>` : ''}
+    ${reportable ? `<div class="support-prompt"><p>Need help diagnosing this problem?</p><button class="button" data-action="report-problem">Report a problem</button></div>` : ''}
     ${agentsStopped && live ? `<div class="banner neutral"><span>${icon('stop')}</span><div><strong>Agents stopped for ${esc(m.name)}</strong><p>Active proof, repair, and research agents are cancelled. No new agent starts until you resume. Preparation, validation, submissions, and server polling continue.</p></div></div>` : ''}
     ${s?.operator?.dispatchPaused && live ? `<div class="banner neutral"><span>${icon('pause')}</span><div><strong>Codex dispatch paused for ${esc(m.name)}</strong><p>No new proof, repair, or research invocation starts. Active invocations finish; validation and server work continue. Account recovery leaves this operator pause in place.</p></div></div>` : paused && live ? `<div class="banner neutral"><span>${icon('pause')}</span><div><strong>New theorem admission paused for ${esc(m.name)}</strong><p>Already admitted work continues. Queued jobs can still invoke Codex.</p></div></div>` : ''}
     ${unresolved.length ? `<div class="mobile-attention">${attentionCard(view, unresolved)}</div>` : ''}
@@ -439,6 +445,21 @@ async function command(action, extras = {}) {
     return result;
   } finally { busy = false; document.querySelectorAll('[data-action]').forEach(el => { if (el.disabled && el.dataset.action === action) el.disabled = false; }); }
 }
+async function showSupportReport(view) {
+  if (!view) return;
+  $('#support-preview').value = '';
+  $('#support-download').disabled = true;
+  $('#support-status').textContent = 'Preparing diagnostics on this computer…';
+  $('#support-dialog').showModal();
+  try {
+    const report = await api(`/api/diagnostics?${new URLSearchParams({ missionId: view.mission.id })}`);
+    supportFilename = report.filename;
+    $('#support-preview').value = report.content;
+    $('#support-download').disabled = false;
+    $('#support-status').textContent = `Ready for ${missionTitle(view.mission)}. Review and remove any private information before sharing.`;
+  } catch (error) { $('#support-status').textContent = `Could not prepare diagnostics: ${error.message}. Check that Mission Control is still connected.`; }
+}
+
 document.addEventListener('click', async event => {
   syncModelPicker(event);
   const close = event.target.closest('[data-close]');
@@ -485,6 +506,15 @@ document.addEventListener('click', async event => {
       case 'refresh': await refresh(); toast('Saved runner status refreshed.'); break;
       case 'menu': { const menu = $('#mission-menu'); menu.hidden = !menu.hidden; event.target.closest('button').setAttribute('aria-expanded', String(!menu.hidden)); break; }
       case 'settings': showSettings(view); break;
+      case 'report-problem': await showSupportReport(view); break;
+      case 'download-support': {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(new Blob([$('#support-preview').value], { type: 'text/plain;charset=utf-8' }));
+        link.download = supportFilename; link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+        $('#support-status').textContent = 'Downloaded. Open a GitHub issue and attach the file, or share it privately with the maintainer.';
+        break;
+      }
       case 'app-settings': renderAppSettings(); $('#app-settings-dialog').showModal(); break;
       case 'credentials': $('#app-settings-dialog').close(); showCredentials(); break;
       case 'check-quota-now': await command('check-quota-now'); break;

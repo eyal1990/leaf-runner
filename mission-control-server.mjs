@@ -13,6 +13,7 @@ import { DEFAULT_CONFIG_PATH, readRunnerConfig, updateRunnerConfig } from './run
 import { readCodexRateLimits, quotaSnapshot } from './codex-quota.mjs';
 import { buildMissionView, readJobs, artifactList, readArtifact, safeId, redact } from './mission-control-data.mjs';
 import { DEFAULT_CREDENTIALS_PATH, credentialStatus, saveApiKey, loadApiKey } from './credentials-store.mjs';
+import { buildSupportReport } from './support-report.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const now = () => new Date().toISOString();
@@ -569,6 +570,12 @@ export async function createMissionControlServer(options = {}) {
           if (!view || !view.jobs.some(j => j.theorem_id === id)) throw statusError('Theorem is outside the selected mission', 404);
           const name = url.searchParams.get('name');
           return reply(200, name ? await readArtifact(control.runs, id, name) : await artifactList(control.runs, id));
+        }
+        if (url.pathname === '/api/diagnostics' && req.method === 'GET') {
+          const missionId = url.searchParams.get('missionId');
+          if (!missionId || !control.findMission(missionId)) throw statusError('Select a mission to diagnose', 404);
+          const { selected } = await control.state({ missionId });
+          return reply(200, await buildSupportReport({ runs: control.runs, view: selected, secrets: control.secrets }));
         }
         if (url.pathname === '/api/export' && req.method === 'GET') {
           const state = await control.state(Object.fromEntries(url.searchParams));

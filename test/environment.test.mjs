@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ensureWorkspace, workspaceIdentity, prepareAgentEnvironment, reviewMission, solveLeaf, runTarget, EnvironmentError } from '../prove2me.mjs';
+import { ensureWorkspace, workspaceIdentity, prepareAgentEnvironment, reviewMission, solveLeaf, runTarget, command, EnvironmentError } from '../prove2me.mjs';
 import { digest, json } from '../runner-state.mjs';
 import { JobStore } from '../job-store.mjs';
 import { WORKSPACE_INSTRUCTIONS } from '../agent-prompts.mjs';
@@ -57,6 +57,7 @@ test('preflight uses Windows sandbox and checks real inputs, writes, and importe
     assert.ok(args.includes('sandbox_mode="workspace-write"'));
     assert.ok(args.some(value => value.includes('sandbox_workspace_write.writable_roots=') && value.includes('leaf')));
     assert.ok(args.includes('-EncodedCommand'));
+    assert.equal(args[args.indexOf('sandbox') + 1], '--', 'the sandbox command has no OS subcommand');
     assert.ok(!args.includes('exec')); assert.ok(!args.includes('--model'));
     const script = await readFile(join(h.dir, 'environment-probe.cjs'), 'utf8');
     assert.match(script, /context.json/); assert.match(script, /references\/lean-setup.md/);
@@ -68,6 +69,41 @@ test('preflight uses Windows sandbox and checks real inputs, writes, and importe
   await prepareAgentEnvironment(h.target, h.workspace, h.dir, h.options, h.hooks);
   assert.match((await readdir(join(h.workspace, 'Solutions'))).join(','), /^RunnerEnvironment_[a-f0-9]+\.lean$/);
 });
+
+for (const platform of ['linux', 'darwin']) {
+  test(`${platform} readiness launches the probe directly through the pinned flat sandbox CLI`, async t => {
+    const h = await fixture(t);
+    h.options.verificationMode = 'server-only'; h.hooks.platform = platform;
+    await mkdir(join(h.workspace, 'references'));
+    for (const name of ['references/prove.md', 'references/lean-setup.md', 'lean-toolchain', 'lakefile.lean'])
+      await writeFile(join(h.workspace, name), 'fixture');
+    await writeFile(join(h.dir, 'context.json'), '{}');
+    const cli = join(h.root, 'flat-sandbox-cli.cjs');
+    // Codex 0.162.1 takes a command immediately after `sandbox`. Model its
+    // argument boundary, then actually launch Node and perform the read/write
+    // probe. An obsolete `linux`/`macos` token is executed and fails like the
+    // reported execvp panic, rather than being ignored by a command mock.
+    await writeFile(cli, `const { spawnSync } = require('node:child_process');
+const args = process.argv.slice(2);
+const command = args.slice(args.indexOf('sandbox') + 1);
+if (command[0] === '--') command.shift();
+const result = spawnSync(command[0], command.slice(1), { stdio: 'inherit', windowsHide: true });
+if (result.error) { console.error('Failed to execvp ' + command[0] + ': ' + result.error.message); process.exit(101); }
+process.exit(result.status ?? 1);
+`);
+    let calls = 0;
+    h.hooks.command = async (_exe, args, settings) => {
+      calls++;
+      assert.ok(args.includes('sandbox_mode="workspace-write"'));
+      assert.ok(!args.some(arg => arg.startsWith('windows.sandbox=')));
+      await command(process.execPath, [cli, ...args], { ...settings, quiet: true });
+    };
+    await prepareAgentEnvironment(h.target, h.workspace, h.dir, h.options, h.hooks);
+    assert.equal(calls, 1);
+    assert.match(await readFile(join(h.dir, 'environment-check-1.log'), 'utf8'), /RUNNER_ENVIRONMENT_READY/);
+    assert.deepEqual(await readdir(join(h.workspace, 'Solutions')), [], 'server-only runs no Lean build');
+  });
+}
 
 test('temporary setup lock retries before a model call and preserves readiness source after recovery', async t => {
   const h = await fixture(t), delays = []; let calls = 0;

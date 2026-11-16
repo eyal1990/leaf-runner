@@ -69,6 +69,16 @@
       <div class="dialog-actions settings-actions"><button type="button" class="button" data-close="settings-dialog">Cancel</button><button class="button primary" data-action="set-runtime-settings" type="submit">Save settings</button></div>
     </form>
   </dialog>
+  <dialog id="support-dialog" aria-labelledby="support-title">
+    <div class="dialog-heading"><span class="eyebrow">Problem report</span><button class="icon-button" data-close="support-dialog" aria-label="Close">×</button></div>
+    <h2 id="support-title">Share diagnostics</h2>
+    <p>Review the file below, download it, then attach it to a GitHub issue. Nothing is sent automatically. You can also send the downloaded file privately to the maintainer.</p>
+    <p>Includes this mission's saved run state, settings, job failures, recent log excerpts, and app/runtime versions. Known credentials are redacted; logs may still contain private mission data. GitHub issues and attachments may be public.</p>
+    <p id="support-status" role="status"></p>
+    <label for="support-preview">Diagnostic file — review and edit before sharing</label>
+    <textarea id="support-preview" spellcheck="false" aria-describedby="support-status"></textarea>
+    <div class="dialog-actions"><button class="button" id="support-download" data-action="download-support" disabled>Download diagnostics</button><a class="button primary" href="https://github.com/eyal1990/leaf-runner/issues/new?title=Leaf%20Runner%20problem%20report&amp;body=What%20happened%3F%0A%0AWhat%20did%20you%20expect%3F%0A%0ASteps%20to%20reproduce%3A%0A%0AAttach%20the%20reviewed%20leaf-runner-diagnostics.txt%20file%20here.%20Remove%20private%20information%20before%20uploading." target="_blank" rel="noreferrer">Open GitHub issue</a></div>
+  </dialog>
   <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>

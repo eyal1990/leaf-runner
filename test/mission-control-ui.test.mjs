@@ -117,6 +117,19 @@ test('genuine stopped-run failures are explicitly labeled as previous', () => {
   assert.match(ui.run('missionPage(state.selected)'), /Previous run failed: Server failed &lt;details&gt;/);
 });
 
+test('problem reporting appears for run failures and job attention, with local editable diagnostics', () => {
+  const ui = browser(); ui.context.fixture = snapshot(); ui.run('state = fixture');
+  assert.doesNotMatch(ui.run('missionPage(state.selected)'), /data-action="report-problem"/);
+  ui.run("state.selected.mission.running = false; state.selected.mission.processStatus = 'ERROR'; state.selected.mission.error = 'Startup failed'");
+  assert.match(ui.run('missionPage(state.selected)'), /data-action="report-problem"/);
+  ui.run("state.selected.mission.processStatus = 'STOPPED'; state.selected.mission.error = null; state.selected.jobs[0].job_status = 'NEEDS_ATTENTION'");
+  assert.match(ui.run('missionPage(state.selected)'), /data-action="report-problem"/);
+  assert.match(shell, /<textarea id="support-preview"/);
+  assert.match(shell, /Nothing is sent automatically/);
+  const url = shell.match(/href="(https:\/\/github.com\/eyal1990\/leaf-runner\/issues\/new[^\"]+)"/)[1];
+  assert.doesNotMatch(url, /missionId|session|error=/);
+});
+
 test('credential setup replaces missing-file diagnostics and keeps the key in a password field', () => {
   const ui = browser(); ui.context.fixture = snapshot(); ui.run('state = fixture');
   Object.assign(ui.context.fixture.selected.mission, { running: false, processStatus: 'ERROR',

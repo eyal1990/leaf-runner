@@ -611,6 +611,7 @@ test('HTTP session authentication, same-origin/CSRF checks, static isolation, ex
   const request = (path, init) => fetch(app.address + path, init);
   assert.equal((await request('/')).status, 200);
   assert.equal((await request('/api/state')).status, 401);
+  assert.equal((await request('/api/diagnostics?missionId=missing')).status, 401);
   const token = new URL(app.url).hash.split('=')[1];
   const session = await request('/api/session', { method: 'POST', headers: { Origin: app.address, Authorization: `Bearer ${token}` } });
   assert.equal(session.status, 200);
@@ -634,6 +635,14 @@ test('HTTP session authentication, same-origin/CSRF checks, static isolation, ex
   const exported = await request(`/api/export?missionId=${receipt.result.missionId}`, { headers });
   assert.equal(exported.status, 200);
   assert.equal(JSON.stringify(await exported.json()).includes('argv'), false);
+  assert.equal((await request('/api/diagnostics?missionId=missing', { headers })).status, 404);
+  const diagnostics = await request(`/api/diagnostics?missionId=${receipt.result.missionId}`, { headers });
+  assert.equal(diagnostics.status, 200);
+  assert.equal(diagnostics.headers.get('cache-control'), 'no-store');
+  const report = await diagnostics.json();
+  assert.equal(report.filename, 'leaf-runner-diagnostics.txt');
+  assert.equal(JSON.parse(report.content).mission.id, receipt.result.missionId);
+  assert.equal(report.content.includes('argv'), false);
 });
 
 test('artifacts are bounded, redaction removes credentials, and paths outside the job are rejected', async t => {

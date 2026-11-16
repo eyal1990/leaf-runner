@@ -113,6 +113,7 @@ test('cold server-only setup uses Git sources and no compiler; sandbox probe sti
   const probe = {
     executable: async () => assert.fail('server-only readiness must not resolve Lake'), platform: 'linux',
     command: async (_exe, args, settings) => {
+      assert.deepEqual(args.slice(args.indexOf('sandbox')), ['sandbox', '--', process.execPath, join(dir, 'environment-probe.cjs')]);
       const script = await readFile(join(dir, 'environment-probe.cjs'), 'utf8');
       assert.ok(!script.includes('spawnSync('));
       await command(process.execPath, [args.at(-1)], { ...settings, quiet: true });

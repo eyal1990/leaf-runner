@@ -1,5 +1,5 @@
 import { open, readdir, realpath } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { join, relative } from 'node:path';
 import { readJson } from './runner-state.mjs';
 import { workFrontier } from './work-policy.mjs';
 import { reduceHistory } from './attempt-history.mjs';
@@ -147,7 +147,7 @@ export async function readArtifact(runs, id, name) {
   if (!safeId(id) || !artifactPattern.test(name) || !(await artifactList(runs, id)).some(e => e.name === name)) throw new Error('Unknown artifact');
   const base = await realpath(runs), path = await realpath(join(runs, id, name));
   const rel = relative(base, path);
-  if (rel.startsWith(`..${sep}`) || rel === '..' || rel.split(sep).length !== 2) throw new Error('Artifact is outside this run');
+  if (rel !== join(id, name)) throw new Error('Artifact is outside this run');
   const handle = await open(path, 'r');
   try {
     const { size } = await handle.stat(), limit = 256 * 1024;

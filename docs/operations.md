@@ -104,6 +104,16 @@ including errors from older versions that did not print the failure. Repeated
 job errors use exponential backoff, initially 30 seconds and capped at 15 minutes
 with the default recovery settings; graph discovery continues during that wait.
 
+## Linux and macOS sandbox readiness
+
+The pinned Codex CLI launches readiness as `codex sandbox -- <command>` and
+selects the host sandbox automatically. Older runner versions inserted a
+`linux` or `macos` argument, which this CLI tries to execute as a program. A panic
+such as `Failed to execvp linux: No such file or directory` therefore indicates
+the obsolete invocation. Update the runner and restart the saved mission. No
+proof attempt was started; workspace rebuilding or installing a program named
+`linux` is unnecessary. Other sandbox errors retain their original diagnostics.
+
 ## Windows sandbox readiness
 
 Automatic selection starts with MXC. A readiness failure with
