@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ApiError, transientReadError } from './api-errors.mjs';
 import { ApiRecovery } from './api-recovery.mjs';
+import { loadApiKey } from './credentials-store.mjs';
 import { idOf, enc, digest, json, sleep, save, exists, progress, latestLogOutput, targetFingerprint, cleanExplanation, readJson, writeIfChanged } from './runner-state.mjs';
 import { moduleFor, imports, ANSWER_SCHEMA, AnswerFormatError, answerPayload, normalizeSolutionDeclaration } from './lean-artifacts.mjs';
 import { runSerialJob } from './serial-jobs.mjs';
@@ -984,9 +985,7 @@ export async function main(argv = process.argv.slice(2), { validateOnly = false 
     if (pipeline.queues.CODEX.concurrency > pipeline.maxActiveJobs) progress('Codex concurrency exceeds maxActiveJobs; the active-job cap limits utilization');
     progress(`Starting Prove2.me runner for "${query}"${values.list ? ' (list only)' : ''}`);
     progress('Loading credentials');
-    let key = process.env.PROVE2ME_API_KEY;
-    if (!key && values.credentials) key = JSON.parse(await readFile(resolve(values.credentials), 'utf8')).api_key;
-    if (!key) throw new Error('Fill in api_key in the project\'s credentials.json. Get a key from the prove2.me account menu → API key.');
+    const key = await loadApiKey(resolve(values.credentials));
     const credentialSource = process.env.PROVE2ME_API_KEY ? 'PROVE2ME_API_KEY' : `api_key in "${resolve(values.credentials)}"`;
     const client = new Client(key, fetch, { report: progress, apiConcurrency: pipeline.apiConcurrency, credentialSource });
     client.signal = controller.signal;
@@ -1010,7 +1009,7 @@ export async function main(argv = process.argv.slice(2), { validateOnly = false 
     } });
     options.signal = controller.signal; client.signal = controller.signal;
     client.recovery = new ApiRecovery(client, { runs: options.runs, pipeline,
-      loadCredentials: async () => process.env.PROVE2ME_API_KEY ?? JSON.parse(await readFile(resolve(values.credentials), 'utf8')).api_key });
+      loadCredentials: () => loadApiKey(resolve(values.credentials)) });
     try {
       const summary = await runTarget(client, target, options, {
         onControlReady: pipeline => controlConnection.ready(pipeline),

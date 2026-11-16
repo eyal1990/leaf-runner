@@ -65,8 +65,15 @@ export function createJobStages({ client, target, context, environment, options,
   async function prepare() {
     const workspace = await (hooks.workspace ?? ensureWorkspace)(environment, {
       ...options, apiVersion: client.version ?? options.apiVersion, workspaceOwner: idOf(target),
+      onWorkspaceProgress: hooks.workspaceProgress ?? options.onWorkspaceProgress,
     });
+    const notify = hooks.workspaceProgress ?? options.onWorkspaceProgress;
+    const started_at = new Date().toISOString();
+    const reportDependencies = () => notify?.({ phase: 'dependencies', message: 'Preparing theorem dependencies',
+      started_at, updated_at: new Date().toISOString() });
+    const heartbeat = notify ? setInterval(reportDependencies, 5000) : null;
     try {
+      reportDependencies();
       const knownDependencies = (context.decompositions?.decompositions ?? []).flatMap(reduction => reduction.children ?? []);
       const referenceModules = knownDependencies.filter(row => !row.deprecated_at &&
         (row.definition_id || ['Definition', 'Open', 'Proved'].includes(row.status)))
@@ -83,7 +90,7 @@ export function createJobStages({ client, target, context, environment, options,
     } catch (error) {
       if (!hooks.workspace && releaseWorkspace) await releaseWorkspace(workspace, options);
       throw error;
-    }
+    } finally { clearInterval(heartbeat); }
   }
 
   async function invokeModel(input) {

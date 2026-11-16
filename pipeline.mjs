@@ -180,6 +180,11 @@ export class Pipeline {
     const waiting = [...index.values()].filter(s => s.job_status === 'ACTIVE' && !this.controls.get(s.theorem_id)?.running);
     const environmentWait = [...index.values()].find(s => s.job_status === 'ACTIVE' && s.stage === 'PREPARE' &&
       /Codex environment is not ready/.test(s.infrastructure_wait ?? ''));
+    const needed = this.selection.graph ? neededTheorems(this.selection.graph) : new Set([this.target.root]);
+    const retrying = [...index.values()].filter(s => needed.has(s.theorem_id) && s.job_status === 'READY' &&
+      s.recovery_failure && s.recovery_failure.message !== 'incomplete_argument' && Date.parse(s.retry_after ?? '') > this.now())
+      .sort((a, b) => Date.parse(a.retry_after) - Date.parse(b.retry_after));
+    const nextRetry = retrying[0];
     const operatorPauses = [
       this.operator.state.admissionPaused && 'New theorem admission paused by operator',
       this.operator.state.dispatchPaused && 'Codex dispatch paused by operator',
@@ -188,10 +193,14 @@ export class Pipeline {
     const waitingReason = operatorPauses
       ? operatorPauses + (this.proofStorageRecovery.waiting ? '; proof storage recovery also active' : '')
       : this.pauseReason === 'local active-job capacity full' && !counts.queues.CODEX.running && environmentWait
-        ? `Waiting for Codex environment recovery: ${environmentWait.infrastructure_wait}` : this.pauseReason;
+        ? `Waiting for Codex environment recovery: ${environmentWait.infrastructure_wait}`
+        : !counts.active && nextRetry
+          ? `Waiting to retry ${nextRetry.recovery_failure.stage ?? 'job'} after failure at ${nextRetry.retry_after}: ${nextRetry.recovery_failure.message}`
+          : this.pauseReason;
     const summary = { target: this.target, run_id: this.runId, started_at: this.startedAt,
       runner_pid: process.pid, config_path: this.options.configPath, operator: this.operator.snapshot(),
-      live_workers: [...this.controls.entries()].filter(([, c]) => c.running).map(([theorem_id, c]) => ({ theorem_id, stage: c.running, model: c.model })),
+      live_workers: [...this.controls.entries()].filter(([, c]) => c.running).map(([theorem_id, c]) => ({ theorem_id, stage: c.running, model: c.model,
+        preparation: c.running === 'PREPARE' ? c.preparation : undefined })),
       root_confirmed: this.selection.rootConfirmed, status, completed: status === 'COMPLETE',
       root_status: this.selection.graph?.root.status, visits: this.visits, results: [...this.results.values()],
       ready_work: this.selection.graph ? scoreWork(this.selection.graph, index, this.now(), this.options).map(({ projected_state, ...work }) => work) : [],
@@ -248,6 +257,7 @@ export class Pipeline {
     this.signal.throwIfAborted();
     if (control.running && !state.pending_outcome) return Promise.resolve();
     control.running = null;
+    delete control.preparation;
     return new Promise((resolve, reject) => {
       control.waiting = { state, persist, resolve, reject }; this.wake();
     });
@@ -274,6 +284,11 @@ export class Pipeline {
         ? `: ${selection.theorem_name}; ${selection.task_kind}; ${selection.operation}; score ${selection.score}; closability ${selection.closability}; attempts ${selection.totalAttempts}, current context ${selection.attemptsInCurrentContext}; ${selection.selection_reason}; context ${selection.context_id}` : ''));
       return this.hooks.runJob(state, {
         dispatch, signal: AbortSignal.any([this.signal, controller.signal]), runId: this.runId, quota: this.quota,
+        workspaceProgress: status => {
+          if (control.running !== 'PREPARE' || this.controls.get(id) !== control) return;
+          control.preparation = { ...status };
+          this.wake();
+        },
         invokeAgent: action => this.invokeAgent(action, AbortSignal.any([this.signal, controller.signal])),
         proofStorageRecovery: this.proofStorageRecovery, readOnlyPoll: () => !!control.polling,
         promptVariant: () => this.limits.promptVariant,
@@ -344,6 +359,8 @@ export class Pipeline {
         if (error instanceof JobPersistenceError) { this.failure = error; }
         else {
           const job = await this.store.read(id);
+          const diagnostic = { stage: job?.stage ?? control.running, operation: job?.operation,
+            ...(error.code ? { code: error.code } : {}) };
           this.results.set(id, { theorem_id: id, status: this.hooks.isEnvironmentError?.(error) ? 'ENVIRONMENT_WAIT' : 'ERROR', error: error.message });
           if (job?.job_status === 'ACTIVE') {
             if (this.hooks.isEnvironmentError?.(error) || retryFrontierError(error)) {
@@ -354,11 +371,13 @@ export class Pipeline {
             } else if (issued(job)) {
               job.dispatch_state = 'DELAYED';
               job.next_poll_at = rememberFailure(job, error.message, this.now(), this.recoveryPolicy);
+              Object.assign(job.recovery_failure, diagnostic);
               job.infrastructure_wait = error.message;
             } else {
               // Preserve the error for the next selected repair, releasing all
               // admission slots instead of permanently excluding the theorem.
               rememberFailure(job, error.message, this.now(), this.recoveryPolicy);
+              Object.assign(job.recovery_failure, diagnostic);
               job.recovery_failure.origin = 'job_error';
               job.feedback = `Previous job failed: ${error.message}\n${job.feedback ?? ''}`;
               job.previous_candidate = job.candidate ?? job.previous_candidate;
@@ -369,6 +388,9 @@ export class Pipeline {
             }
             if (!await this.store.replace(job, job.revision, { allowRetirement: true })) throw new JobPersistenceError('Cannot park failed job');
           }
+          const retryAt = job?.job_status === 'READY' ? job.retry_after : job?.next_poll_at;
+          progress(`[${id}/${diagnostic.stage ?? 'job'}] ${diagnostic.operation ?? 'action'} failed${error.code ? ` (${error.code})` : ''}: ${error.message}` +
+            (retryAt ? `; retry eligible at ${retryAt}` : '; inspect the saved job for recovery details'));
         }
       }
     }).catch(error => { this.failure = error; }).finally(() => {

@@ -83,16 +83,23 @@ export function buildMissionView({ mission, summary, graph, jobs, since = 0, unt
     if (pendingStatuses.has(job.status) && !(job.remote_operations ?? []).length && !Object.keys(job.publications ?? {}).length) pending.set(job.submission_id ?? job.job_id ?? job.theorem_id,
       { theorem_id: job.theorem_id, submission_id: job.submission_id, status: job.status, unknown: /UNKNOWN/.test(job.status) });
     const worker = workers.get(job.theorem_id);
+    const running = !!(mission.running && worker && job.job_status === 'ACTIVE' && worker.stage === job.stage &&
+      (!summary.run_id || !job.run_id || job.run_id === summary.run_id) &&
+      (!job.dispatch_state || job.dispatch_state === 'RUNNING'));
+    const retryWaiting = job.job_status === 'READY' && job.recovery_failure &&
+      job.recovery_failure.message !== 'incomplete_argument' && Date.parse(job.retry_after ?? '') > Date.now();
     return { ...pick(job, ['theorem_id', 'job_id', 'root_id', 'run_id', 'revision', 'job_status', 'stage', 'operation', 'dispatch_state',
       'status', 'model', 'reasoning_effort', 'attempt_id', 'attempt_count', 'context_id', 'updated_at', 'claimed_at', 'next_poll_at',
       'stage_wait_ms', 'verification_mode', 'submission_id']), theorem_name: nodes.get(job.theorem_id)?.theorem_name ?? job.theorem_name ?? job.theorem_id,
-      running: !!(mission.running && worker && job.job_status === 'ACTIVE' && worker.stage === job.stage &&
-        (!summary.run_id || !job.run_id || job.run_id === summary.run_id) &&
-        (!job.dispatch_state || job.dispatch_state === 'RUNNING')), worker_model: worker?.model,
+      running, worker_model: worker?.model,
+      next_poll_at: retryWaiting ? job.retry_after : job.next_poll_at,
+      preparation: running && job.stage === 'PREPARE' && worker.preparation ? pick(worker.preparation,
+        ['phase', 'message', 'started_at', 'updated_at', 'files_copied', 'bytes_copied']) : null,
       total_attempts: history.totalAttempts, context_attempts: history.attemptsInCurrentContext,
       failure: history.latestFailure ? pick(history.latestFailure, ['origin', 'category', 'message', 'code']) : null,
       remote_issued: pendingStatuses.has(job.status),
-      waiting_reason: job.job_status === 'ACTIVE' && (job.dispatch_state === 'DELAYED' ||
+      waiting_reason: retryWaiting ? `Previous ${job.recovery_failure.stage ?? 'job'} failure${job.recovery_failure.code ? ` (${job.recovery_failure.code})` : ''}: ${job.recovery_failure.message}`
+        : job.job_status === 'ACTIVE' && (job.dispatch_state === 'DELAYED' ||
         job.pending_outcome?.dispatch_state === 'DELAYED') ? job.infrastructure_wait ?? null : null,
       history: (job.history ?? []).filter(e => e.event_type === 'attempt' && !excluded.has(e.attempt)).map(e => pick(e,
         ['event_id', 'attempt_id', 'attempt', 'result', 'model', 'reasoning_effort', 'operation', 'observed_at', 'submission_id', 'root_id', 'run_id'])).slice(-150),

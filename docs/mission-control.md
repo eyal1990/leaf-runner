@@ -7,6 +7,20 @@ local dashboard; the bare address may ask you to open it from the terminal.
 The server listens on `127.0.0.1` (port 4317 by default). It starts no proof work
 until you start a mission, and does not automatically resume old runs.
 
+## App settings
+
+Open **App settings** in the top bar to view the Prove2.me connection and update
+your API key. A saved key does not occupy a dashboard banner. Missing keys still
+show a setup prompt. Saving a key retries lookup for the selected stopped mission
+with the new key, updates its title, and clears a failed discovery or authentication
+state when lookup succeeds. This does not start proof work. If lookup fails, the
+dialog shows the error so you can correct the key or mission selection.
+Opening or reloading the dashboard also retries unresolved missions and saved
+credential errors with the current saved key (or launcher environment key).
+This runs in the background and never starts a mission. Healthy missions and
+unrelated run failures are left as saved; normal four-second polling does not
+repeat these API lookups.
+
 ## Choose a mission
 
 | Control | What it does |
@@ -66,6 +80,7 @@ the root is proved. Only a server-confirmed root result establishes completion.
 | **Activity time range** | **Since run start**, **Last hour**, **Last 24 hours**, or **Custom period**. Custom **From**, **To**, and **Apply period** use the displayed local timezone. Filters historical results/activity, while queues, frontier, and pending work remain current. |
 | **Theorem queues** | One card per stage: **Prepare** (workspace/context/readiness), **Codex** (proof/repair), **Validate** (candidate checks), **Server** (publication/submission/reconciliation). Each job appears in its current stage. |
 | Queue counts | Running workers, waiting jobs, delayed jobs, and saved handoffs. Delayed jobs are included in waiting; handoffs retain their source stage until transferred. Worker capacity is a limit, not the number of jobs. |
+| **Preparing workspaces** | Shows the current preparation step, elapsed time, last update, and completed files/MiB while copying. Runner updates arrive about every five seconds. The activity bar has no estimated percentage. An update older than 20 seconds replaces the bar with a freshness warning. Details also appear in the theorem inspector. |
 | Click a queue card | Opens **Work → Active** filtered to that stage. **Clear … filter** removes the stage filter and shows all saved work. |
 | **View all work** | Opens **Work → All** without a stage filter. |
 | **Open leaves** count / **View open leaves** | Opens all observed frontier leaves, including unclaimed and already claimed tasks. |

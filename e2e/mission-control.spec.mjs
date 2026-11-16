@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { fork } from 'node:child_process';
-import { mkdtemp, copyFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, copyFile, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MissionControl, launchMissionControl } from '../mission-control-server.mjs';
@@ -18,7 +18,9 @@ test('session login, mission setup, settings persistence, and stop/save', async 
   };
   try {
     await copyFile(new URL('../runner-config.json', import.meta.url), configPath);
-    const control = new MissionControl({ runs, configPath,
+    const credentialsPath = join(runs, 'credentials.json');
+    await writeFile(credentialsPath, JSON.stringify({ api_key: 'browser-test-key' }));
+    const control = new MissionControl({ runs, configPath, credentialsPath,
       spawnRunner: () => fork(new URL('./fixtures/runner.mjs', import.meta.url), [runs], {
         windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       }),
@@ -141,7 +143,9 @@ test('new missions, previous missions, and stop-and-switch preserve saved runs',
   };
   try {
     await copyFile(new URL('../runner-config.json', import.meta.url), configPath);
-    const control = new MissionControl({ runs, configPath,
+    const credentialsPath = join(runs, 'credentials.json');
+    await writeFile(credentialsPath, JSON.stringify({ api_key: 'browser-test-key' }));
+    const control = new MissionControl({ runs, configPath, credentialsPath,
       spawnRunner: argv => fork(new URL('./fixtures/runner.mjs', import.meta.url), [runs, argv[1]], {
         windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       }),

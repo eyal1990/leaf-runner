@@ -63,6 +63,47 @@ Recovery timings are in [configuration](configuration.md). Workspace upgrade
 status/logs live in `.runs/workspace-upgrade.json` and `.log`. This updates
 platform documentation, not the runner's API implementation.
 
+## Workspace copy progress
+
+`Workspace preparation: copying the pinned environment` starts a private copy
+from the prepared seed. Older versions call this `copying the full Lean/Mathlib
+environment`. This is a local disk operation, not a Lean compilation or model
+request. Server-only mode copies Mathlib sources; local mode also copies the
+downloaded build cache. Dependency Git data is retained for Lake revision checks.
+Mathlib's internal file symlinks, such as benchmark script aliases on Linux,
+are materialized as independent regular files in each private workspace. Links
+outside the seed, directory links, and linked Git metadata remain rejected.
+
+A full copy is needed when no reusable slot exists for that environment, for
+example on the first run, while filling the pool, after a pin/instruction/API
+version change, or after discarding an unsafe slot. Later jobs reset and verify
+released slots instead. Many small files, slow disks, and filesystem scanning
+can make initial copies take minutes.
+
+Copies use bounded parallel file operations and report completed file/byte
+counts every 30 seconds in the terminal. Mission Control shows a **Preparing
+workspaces** panel with the current step, elapsed time, file/byte counts, and a
+heartbeat about every five seconds, also available in the theorem inspector.
+Increasing counts show progress; unchanged counts
+can also mean one large file is still copying. Stop/save cancels before further
+files are started, drains active filesystem operations, and removes incomplete
+staging without publishing a ready workspace. A subsequent start can retry.
+
+When reporting a suspected stall, include the following heartbeat lines, elapsed
+time, verification mode, disk free space, and any filesystem error. The initial
+copy message alone does not establish a failure. Keep cached workspaces when
+investigating; deleting them forces full copies again.
+
+If a job fails, its terminal line includes the stage, operation, error code and
+message, and the next retry eligibility time. A preparation failure can release
+the local slot, leaving zero active jobs while the theorem waits for its retry.
+The runner summary identifies that retry wait, and Mission Control shows it in
+**Needs attention**, **Work → Waiting**, and the theorem inspector. The saved
+`.runs/<theorem_id>/state.json` contains `recovery_failure` and `retry_after`,
+including errors from older versions that did not print the failure. Repeated
+job errors use exponential backoff, initially 30 seconds and capped at 15 minutes
+with the default recovery settings; graph discovery continues during that wait.
+
 ## Windows sandbox readiness
 
 Automatic selection starts with MXC. A readiness failure with

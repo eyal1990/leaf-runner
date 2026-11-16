@@ -12,6 +12,7 @@ import { pipelineLimits } from './pipeline.mjs';
 import { DEFAULT_CONFIG_PATH, readRunnerConfig, updateRunnerConfig } from './runner-config-store.mjs';
 import { readCodexRateLimits, quotaSnapshot } from './codex-quota.mjs';
 import { buildMissionView, readJobs, artifactList, readArtifact, safeId, redact } from './mission-control-data.mjs';
+import { DEFAULT_CREDENTIALS_PATH, credentialStatus, saveApiKey, loadApiKey } from './credentials-store.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const now = () => new Date().toISOString();
@@ -19,6 +20,7 @@ const statusError = (message, status = 400) => Object.assign(new Error(message),
 const publicMission = mission => Object.fromEntries(Object.entries(mission).filter(([key]) => !['argv', 'nextArgv'].includes(key)));
 const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const shortHash = value => createHash('sha256').update(value).digest('hex').slice(0, 20);
+const credentialError = message => /ENOENT.*credentials.*\.json|Prove2\.me API key required|Fill in api_key|authentication failed|HTTP (401|403)\b/i.test(message ?? '');
 function option(argv, flag) {
   let value;
   for (let i = 0; i < argv.length; i++) {
@@ -37,15 +39,24 @@ function withoutOptions(argv, flags) {
 }
 
 export class MissionControl {
-  constructor({ runs = join(ROOT, '.runs'), configPath = DEFAULT_CONFIG_PATH, spawnRunner, sampleLimits, validateArgs, samplerInterval = 60000 } = {}) {
+  constructor({ runs = join(ROOT, '.runs'), configPath = DEFAULT_CONFIG_PATH, credentialsPath = DEFAULT_CREDENTIALS_PATH, spawnRunner, sampleLimits, validateArgs, resolveTarget, samplerInterval = 60000 } = {}) {
     this.runs = runs; this.base = join(runs, 'mission-control');
     this.path = join(this.base, 'registry.json');
     this.configPath = resolve(configPath);
+    this.credentialsPath = resolve(credentialsPath);
     this.registry = { revision: 0, missions: [] };
     this.spawnRunner = spawnRunner ?? (argv => fork(join(ROOT, 'prove2me.mjs'), ['--no-ui', ...argv], {
       cwd: ROOT, windowsHide: true, stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
     }));
     this.validateArgs = validateArgs ?? (async argv => (await import('./prove2me.mjs')).main(argv, { validateOnly: true }));
+    this.resolveTarget = resolveTarget ?? (async (argv, key) => {
+      const { Client, findTarget } = await import('./prove2me.mjs');
+      const { query, selection } = await this.validateArgs(argv);
+      // Use a fresh client: a token obtained with the previous key cannot be reused.
+      const client = new Client(key);
+      client.signal = AbortSignal.timeout(20000);
+      return findTarget(client, query, selection);
+    });
     this.sampleLimits = sampleLimits ?? (async () => {
       const { executable, childEnv } = await import('./prove2me.mjs');
       const active = this.registry.missions.find(m => m.id === this.active?.missionId);
@@ -92,6 +103,7 @@ export class MissionControl {
       : ['--mission', target.mission?.name ?? target.name];
   }
   runnerArgs(argv) {
+    if (!option(argv, '--credentials') && this.credentialsPath !== DEFAULT_CREDENTIALS_PATH) argv = [...argv, '--credentials', this.credentialsPath];
     // Old UI-generated configs must not silently replace the project config.
     const configured = option(argv, '--config');
     if (configured) {
@@ -102,6 +114,73 @@ export class MissionControl {
     if (path && !isAbsolute(path)) return [...withoutOptions(argv, ['--config']), '--config', resolve(path)];
     if (!path && this.configPath !== DEFAULT_CONFIG_PATH) return [...argv, '--config', this.configPath];
     return [...argv];
+  }
+  credentialPath(mission) {
+    return resolve(option(mission?.nextArgv ?? mission?.argv ?? [], '--credentials') ?? this.credentialsPath);
+  }
+  async credentials(mission) {
+    const path = this.credentialPath(mission);
+    const status = await credentialStatus(path);
+    if (status.configured) this.secrets.push(await loadApiKey(path));
+    this.secrets = [...new Set(this.secrets)];
+    return status;
+  }
+  async saveCredentials({ missionId, apiKey }) {
+    const mission = missionId ? this.findMission(missionId) : null;
+    if (missionId && !mission) throw statusError('Mission not found', 404);
+    if (process.env.PROVE2ME_API_KEY) throw statusError('PROVE2ME_API_KEY is set in the launcher environment and takes precedence. Update it there, then restart Mission Control.', 409);
+    // Never put the submitted key in command receipts, registry entries or logs.
+    if (typeof apiKey === 'string' && apiKey.trim()) this.secrets.push(apiKey.trim());
+    await saveApiKey(this.credentialPath(mission), apiKey);
+    const missionRefreshError = mission ? await this.refreshMission(mission) : null;
+    return { configured: true, source: 'file', editable: true, ...(missionRefreshError ? { missionRefreshError } : {}) };
+  }
+  async refreshMission(mission) {
+    // Retry discovery without starting proof work. Startup can fail before the
+    // runner ever sends its target, leaving the raw query and ERROR in the UI.
+    if (!['RUNNING', 'STARTING', 'STOPPING'].includes(mission.status)) {
+      const discoveryFailed = !mission.target?.root;
+      const credentialFailure = credentialError(mission.error);
+      try {
+        const key = await loadApiKey(this.credentialPath(mission));
+        const target = await this.resolveTarget(this.runnerArgs(mission.nextArgv ?? mission.argv), key);
+        mission.target = target; mission.name = target.name;
+        if (discoveryFailed || credentialFailure) {
+          mission.status = 'REGISTERED'; mission.error = null;
+        }
+      } catch (error) {
+        const message = redact(error.message, this.secrets);
+        if (discoveryFailed || credentialFailure) { mission.status = 'ERROR'; mission.error = message; }
+        await this.persist();
+        return message;
+      }
+      await this.persist();
+    }
+    return null;
+  }
+  refreshMissions() {
+    if (this.missionRefresh) return this.missionRefresh;
+    this.missionRefresh = (async () => {
+      // Refresh only incomplete discovery/authentication on app open. Do not
+      // replay runs, clear unrelated failures, or scan every healthy mission.
+      const ids = this.registry.missions.filter(m => !m.target?.root || credentialError(m.error)).map(m => m.id);
+      for (const id of ids) {
+        if (this.closing) break;
+        const operation = this.writer.then(async () => {
+          const mission = this.findMission(id);
+          if (!mission || this.active?.missionId === mission.id ||
+              ['RUNNING', 'STARTING', 'STOPPING'].includes(mission.status) ||
+              mission.target?.root && !credentialError(mission.error)) return;
+          const lock = await this.externalRunner();
+          if (lock?.alive || !(await this.credentials(mission)).configured) return;
+          await this.refreshMission(mission);
+        });
+        // Release the writer between lookups so user commands can proceed.
+        this.writer = operation.catch(() => {});
+        await operation;
+      }
+    })().finally(() => { this.missionRefresh = null; });
+    return this.missionRefresh;
   }
   async configuration(mission) {
     const argv = this.runnerArgs(mission.nextArgv ?? mission.argv);
@@ -166,6 +245,7 @@ export class MissionControl {
       : 'A saved runner lock needs inspection. Confirm that its process has stopped before removing the lock.', 409);
     const argv = this.runnerArgs(mission.nextArgv ?? mission.argv);
     await this.validateArgs(argv);
+    if (!(await this.credentials(mission)).configured) return { status: 'CREDENTIALS_REQUIRED', missionId: mission.id };
     await this.archiveCurrent();
     mission.argv = argv; delete mission.nextArgv;
     mission.status = 'STARTING'; mission.error = null; mission.startedAt = now(); mission.finishedAt = null;
@@ -384,6 +464,7 @@ export class MissionControl {
     return { revision: this.registry.revision, observedAt: now(), singleRunner: true,
       lock: lock ? { alive: lock.alive, managed: !!this.active } : null,
       account: { ...this.account, checking: !!this.sampling }, selected,
+      credentials: await this.credentials(selected ? this.findMission(selected.mission.id) : null),
       missions: views.map(v => ({ mission: v.mission, counts: v.counts, frontier: v.frontier,
         currentWork: v.jobs.filter(j => j.job_status === 'ACTIVE').map(j => ({
           theorem_id: j.theorem_id, theorem_name: j.theorem_name, job_status: j.job_status,
@@ -401,8 +482,10 @@ export class MissionControl {
       range };
   }
   async close() {
+    this.closing = true;
     clearInterval(this.sampleTimer);
     if (this.active && !this.active.finished) { this.active.child.send({ type: 'stop' }); await this.active.exited; }
+    await this.missionRefresh;
     await this.writer;
     await this.sampling;
   }
@@ -459,6 +542,20 @@ export async function createMissionControlServer(options = {}) {
         if (url.pathname === '/api/session' && req.method === 'GET') return reply(200, { csrf });
         if (url.pathname === '/api/state' && req.method === 'GET') return reply(200, await control.state(Object.fromEntries(url.searchParams)));
         if (url.pathname === '/api/limits' && req.method === 'POST') return reply(200, await control.checkLimits());
+        if (url.pathname === '/api/refresh-missions' && req.method === 'POST') {
+          void control.refreshMissions().catch(error => console.error(`Mission refresh: ${redact(error.message, control.secrets)}`));
+          return reply(202, { status: 'REFRESHING' });
+        }
+        if (url.pathname === '/api/credentials' && req.method === 'POST') {
+          let body = '';
+          for await (const chunk of req) { body += chunk; if (Buffer.byteLength(body) > 8192) throw statusError('Credentials request too large', 413); }
+          let parsed;
+          try { parsed = JSON.parse(body); } catch { throw statusError('Invalid credentials request'); }
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw statusError('Invalid credentials request');
+          const operation = control.writer.then(() => control.saveCredentials(parsed));
+          control.writer = operation.catch(() => {});
+          return reply(200, await operation);
+        }
         if (url.pathname === '/api/command' && req.method === 'POST') {
           let body = '';
           for await (const chunk of req) { body += chunk; if (Buffer.byteLength(body) > 8192) throw statusError('Command too large', 413); }

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { cp, lstat, mkdir, readFile, readdir, rename, rm, utimes } from 'node:fs/promises';
+import { constants, createReadStream } from 'node:fs';
+import { chmod, cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, utimes } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { digest, exists, json, progress, save } from './runner-state.mjs';
 import { withSetupSlot, boundedResource } from './shared-resources.mjs';
@@ -25,29 +25,103 @@ async function removeStaging(root, path) {
   await rm(path, { recursive: true, force: true });
 }
 
-export async function copyEnvironment(source, destination, { label, excludePackages = false } = {}) {
+export async function copyEnvironment(source, destination, { label, excludePackages = false, signal, onProgress } = {}) {
+  signal?.throwIfAborted();
+  source = resolve(source); destination = resolve(destination);
+  const suffix = relative(source, destination);
+  if (!suffix || (!isAbsolute(suffix) && suffix.split(/[\\/]/)[0] !== '..'))
+    throw new Error('Environment copy destination must be outside its source');
   const startedAt = Date.now();
-  let files = 0;
-  if (label) progress(`${label}: copying the full Lean/Mathlib environment into a private workspace; this can take several minutes`);
-  const heartbeat = label ? setInterval(() => progress(`${label}: workspace copy running (${Math.round((Date.now() - startedAt) / 1000)}s elapsed, ${files} files processed)`), 30000) : null;
+  let files = 0, bytes = 0, failure;
+  const report = () => onProgress?.({ phase: 'copy', message: 'Copying Mathlib into a private workspace', files_copied: files, bytes_copied: bytes });
+  report();
+  const status = () => `${Math.round((Date.now() - startedAt) / 1000)}s elapsed, ${files} files copied, ${(bytes / 1024 ** 2).toFixed(1)} MiB copied`;
+  if (label) progress(`${label}: copying the pinned environment (Mathlib sources and any local build cache) into a private workspace; first copies can take several minutes`);
+  const heartbeat = label ? setInterval(() => progress(`${label}: workspace copy running (${status()})`), 30000) : null;
+  const directories = [], copySlot = boundedResource(8);
+  async function copyEntry(path, target) {
+    if (failure) return;
+    try {
+      signal?.throwIfAborted();
+      if (path === join(source, '.git') || ['.runner-seed.json', inventoryFile].includes(basename(path)) ||
+          excludePackages && path === join(source, '.lake', 'packages')) return;
+      const { path: fileSource, info } = await environmentEntry(source, path);
+      // Lake checks dependency revisions/URLs during builds, so retain their
+      // independent Git directories. Reject worktree pointers/object sharing.
+      if (basename(path) === '.git' && !info.isDirectory()) throw new Error(`Linked Git metadata is not isolated: ${path}`);
+      if (path.endsWith(join('.git', 'objects', 'info', 'alternates')) && (await readFile(path, 'utf8')).trim())
+        throw new Error(`Shared Git objects are not isolated: ${path}`);
+      signal?.throwIfAborted();
+      if (info.isDirectory()) {
+        await mkdir(target, { recursive: true });
+        await ordinaryDirectory(target);
+        directories.push({ path, target, mode: info.mode });
+      } else {
+        // Node's recursive cp awaits every file serially. Copy independent files
+        // with bounded concurrency, retaining cp's collision/timestamp handling.
+        // Reflinks are independent on write; unsupported filesystems copy bytes.
+        await cp(fileSource, target, { force: false, errorOnExist: !excludePackages,
+          preserveTimestamps: true, mode: constants.COPYFILE_FICLONE });
+        files++; bytes += info.size;
+        report();
+      }
+    } catch (error) { failure ??= error; throw error; }
+  }
   try {
-    await cp(source, destination, { recursive: true, force: false, errorOnExist: !excludePackages, preserveTimestamps: true,
-      // No hard links/junctions/symlinks or Git metadata with outside references.
-      filter: async path => {
-        if (path === join(source, '.git') || ['.runner-seed.json', inventoryFile].includes(basename(path)) ||
-            excludePackages && path === join(source, '.lake', 'packages')) return false;
-        const info = await lstat(path);
-        if (info.isSymbolicLink()) throw new Error(`Linked environment path is not isolated: ${path}`);
-        // Lake checks dependency revisions/URLs during builds, so retain their
-        // independent Git directories. Reject worktree pointers/object sharing.
-        if (basename(path) === '.git' && !info.isDirectory()) throw new Error(`Linked Git metadata is not isolated: ${path}`);
-        if (path.endsWith(join('.git', 'objects', 'info', 'alternates')) && (await readFile(path, 'utf8')).trim())
-          throw new Error(`Shared Git objects are not isolated: ${path}`);
-        if (info.isFile()) files++;
-        return true;
-      } });
-    if (label) progress(`${label}: private workspace copy completed (${Math.round((Date.now() - startedAt) / 1000)}s elapsed)`);
+    await copyEntry(source, destination);
+    for (let index = 0; index < directories.length; index++) {
+      signal?.throwIfAborted();
+      const { path, target } = directories[index];
+      const results = await Promise.allSettled((await readdir(path)).map(name =>
+        copySlot(() => copyEntry(join(path, name), join(target, name)))));
+      // Drain in-flight writes before the caller removes failed staging trees.
+      if (failure) throw failure;
+      const rejected = results.find(result => result.status === 'rejected');
+      if (rejected) throw rejected.reason;
+    }
+    // Apply directory permissions after their contents have been populated.
+    for (const { target, mode } of directories.reverse()) {
+      signal?.throwIfAborted();
+      await chmod(target, mode);
+    }
+    signal?.throwIfAborted();
+    if (label) progress(`${label}: private workspace copy completed (${status()})`);
+    onProgress?.({ phase: 'copy', message: 'Private workspace copy complete', files_copied: files, bytes_copied: bytes, complete: true });
   } finally { clearInterval(heartbeat); }
+}
+
+// Mathlib tracks file symlinks (for example benchmark *.py script aliases).
+// Materialize only internal, regular-file targets into private files. Never
+// traverse directory links, external targets, or linked Git metadata.
+async function environmentEntry(root, path) {
+  const info = await lstat(path);
+  if (!info.isSymbolicLink()) return { path, info };
+  const target = await realpath(path), base = await realpath(root);
+  const suffix = relative(base, target);
+  if (!suffix || isAbsolute(suffix) || suffix.split(/[\\/]/)[0] === '..' ||
+      relative(root, path).split(/[\\/]/).includes('.git') || suffix.split(/[\\/]/).includes('.git'))
+    throw new Error(`Linked environment path is not isolated: ${path}`);
+  const targetInfo = await lstat(target);
+  if (!targetInfo.isFile()) throw new Error(`Linked environment path is not isolated: ${path}`);
+  return { path: target, info: targetInfo };
+}
+
+// File callbacks only update memory. Publish at most once every five seconds,
+// plus phase changes, so large environments cannot flood runner checkpoints.
+function preparationProgress(notify) {
+  const started_at = new Date().toISOString();
+  let current;
+  const publish = () => { if (current) notify?.({ ...current, updated_at: new Date().toISOString() }); };
+  const timer = notify ? setInterval(publish, 5000) : null;
+  return {
+    update(details) {
+      const changed = details.phase !== current?.phase;
+      if (changed) current = { started_at, ...details };
+      else Object.assign(current, details);
+      if (changed || details.complete) publish();
+    },
+    close() { clearInterval(timer); },
+  };
 }
 
 async function ownedWorkspace(workspace, options) {
@@ -98,7 +172,7 @@ async function hashFile(path, signal) {
 
 // Verify actual bytes, including compiled output. Metadata alone would miss a
 // changed file whose size/timestamp was preserved. Never traverse a junction.
-async function packageInventory(root, signal) {
+async function packageInventory(root, signal, trustedSource) {
   const entries = [], directories = [''];
   const metadataSlot = boundedResource(16);
   if (!await ordinaryDirectory(root, { optional: true })) return entries;
@@ -111,7 +185,8 @@ async function packageInventory(root, signal) {
       if (row.isDirectory() && !row.isSymbolicLink()) {
         directories.push(path); entries.push({ path, directory: true });
       } else {
-        const info = await lstat(join(root, path));
+        const { info } = trustedSource ? await environmentEntry(trustedSource, join(root, path))
+          : { info: await lstat(join(root, path)) };
         if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new Error(`Linked or invalid package file: ${path}`);
         // fs.cp(preserveTimestamps) uses Date precision. Match that precision
         // so verification does not perturb unchanged Lake cache timestamps.
@@ -154,7 +229,8 @@ async function resetWorkspace(source, workspace, inventory, signal) {
     const destination = join(packages, entry.path), previous = actual.get(entry.path);
     if (entry.directory) { if (!previous?.directory) await mkdir(destination, { recursive: true }); }
     else if (previous?.hash !== entry.hash) {
-      await cp(join(source, '.lake', 'packages', entry.path), destination, { preserveTimestamps: true });
+      const file = await environmentEntry(source, join(source, '.lake', 'packages', entry.path));
+      await cp(file.path, destination, { preserveTimestamps: true });
     } else if (previous.mtime !== entry.mtime) {
       await utimes(destination, entry.mtime / 1000, entry.mtime / 1000);
     }
@@ -167,7 +243,7 @@ async function resetWorkspace(source, workspace, inventory, signal) {
   for (const row of await readdir(join(workspace, '.lake'))) {
     if (row !== 'packages') await removeStaging(workspace, join(workspace, '.lake', row));
   }
-  await copyEnvironment(source, workspace, { excludePackages: true });
+  await copyEnvironment(source, workspace, { excludePackages: true, signal });
   forgetCompiledDependencies(workspace);
 }
 
@@ -201,11 +277,12 @@ export function createWorkspaceManager(initialize) {
     try { return await action; }
     finally { if (initializing.get(path) === action) initializing.delete(path); }
   }
-  return async (environment, options, identity) => {
+  async function acquire(environment, options, identity) {
     options.signal?.throwIfAborted();
     const capacity = options.pipeline?.maxActiveJobs ?? defaults.maxActiveJobs;
     if (!Number.isSafeInteger(capacity) || capacity < 1) throw new Error('Workspace pool capacity must be a positive integer');
     const source = await seed(environment, options, identity);
+    options.onWorkspaceProgress?.({ phase: 'waiting', message: 'Waiting to allocate a private workspace' });
     const label = `[${options.workspaceOwner ?? 'job'}] Workspace preparation`;
     const allocation = await withSetupSlot(async () => {
       options.signal?.throwIfAborted();
@@ -246,6 +323,7 @@ export function createWorkspaceManager(initialize) {
     try {
       let copyFresh = !reused;
       if (reused) {
+        options.onWorkspaceProgress?.({ phase: 'reset', message: 'Resetting a reusable workspace and verifying Mathlib files' });
         await save(join(path, '.runner-workspace.json'), { ...leased, state: 'resetting' });
         const startedAt = Date.now();
         progress(`${label}: resetting reusable workspace ${basename(path)} and verifying dependency contents`);
@@ -259,7 +337,7 @@ export function createWorkspaceManager(initialize) {
               if (saved.pool_version !== POOL_VERSION || json(saved.environment) !== json(identity)) throw new Error('Package inventory identity mismatch');
               inventory = saved.entries;
             } else {
-              inventory = await packageInventory(join(source, '.lake', 'packages'), options.signal);
+              inventory = await packageInventory(join(source, '.lake', 'packages'), options.signal, source);
               await save(inventoryPath, { pool_version: POOL_VERSION, environment: identity, entries: inventory });
             }
             // Inventory paths come from a trusted seed, but never let damaged
@@ -300,7 +378,7 @@ export function createWorkspaceManager(initialize) {
       if (!copyFresh) throw new Error('Workspace preparation did not complete');
       const staging = join(root, `.${basename(path)}.${randomUUID().slice(0, 8)}.tmp`);
       try {
-        await copyEnvironment(source, staging, { label });
+        await copyEnvironment(source, staging, { label, signal: options.signal, onProgress: options.onWorkspaceProgress });
         options.signal?.throwIfAborted();
         await save(join(staging, '.runner-workspace.json'), leased);
         await rename(staging, path);
@@ -311,5 +389,13 @@ export function createWorkspaceManager(initialize) {
       leases.delete(path);
       throw error;
     }
+  }
+  return async (environment, options, identity) => {
+    options.signal?.throwIfAborted();
+    const reporter = preparationProgress(options.onWorkspaceProgress);
+    try {
+      reporter.update({ phase: 'seed', message: 'Preparing the pinned Mathlib environment' });
+      return await acquire(environment, { ...options, onWorkspaceProgress: details => reporter.update(details) }, identity);
+    } finally { reporter.close(); }
   };
 }

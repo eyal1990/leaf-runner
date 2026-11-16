@@ -35,6 +35,7 @@ async function fixture(t) {
     if (argv.some(arg => typeof arg !== 'string')) throw new Error('Invalid argument');
     return { query: argv[1], options: { pipeline: {} } };
   }, sampleLimits: async () => ({ ordinaryUsageAllowed: true, rateLimits: { primary: { usedPercent: 34, windowDurationMins: 300, resetsAt: 1900000000 } } }) });
+  control.credentials = async () => ({ configured: true, source: 'file', editable: true });
   await control.init();
   t.after(async () => { await control.close(); await rm(runs, { recursive: true, force: true }); });
   const command = body => control.command({ id: randomUUID(), revision: control.registry.revision, ...body });
@@ -805,6 +806,39 @@ test('sandbox recovery and elevated failure logs are available in the artifact i
   assert.deepEqual((await artifactList(runs, id)).map(x => x.name),
     ['environment-15-3-elevated.log', 'environment-codex-recovery-unelevated.log']);
   assert.equal((await readArtifact(runs, id, 'environment-codex-recovery-unelevated.log')).content, 'sandbox diagnostic');
+});
+
+test('preparation retry waits expose the saved error and retry time even with zero active jobs', () => {
+  const job = { theorem_id: 'leaf', root_id: 'root', job_status: 'READY', stage: 'PREPARE',
+    retry_after: new Date(Date.now() + 60000).toISOString(),
+    recovery_failure: { message: 'Cannot copy Mathlib', stage: 'PREPARE', operation: 'reconstruct', code: 'ENOSPC', count: 6 } };
+  const build = () => buildMissionView({ mission: { running: true, target: { root: 'root' } }, jobs: [job] }).jobs[0];
+  assert.equal(build().running, false);
+  assert.equal(build().preparation, null);
+  assert.equal(build().next_poll_at, job.retry_after);
+  assert.match(build().waiting_reason, /Previous PREPARE failure \(ENOSPC\): Cannot copy Mathlib/);
+  delete job.recovery_failure.stage; delete job.recovery_failure.code;
+  assert.match(build().waiting_reason, /Previous job failure: Cannot copy Mathlib/, 'legacy saved errors are visible too');
+  job.retry_after = new Date(Date.now() - 1).toISOString();
+  assert.equal(build().waiting_reason, null, 'expired waits no longer block the UI');
+  job.retry_after = new Date(Date.now() + 60000).toISOString(); job.job_status = 'ACTIVE';
+  assert.equal(build().waiting_reason, null, 'a new claim does not show the previous retry wait');
+});
+
+test('workspace progress belongs only to a matching live preparation worker', () => {
+  const preparation = { phase: 'copy', message: 'Copying Mathlib', files_copied: 120, bytes_copied: 1024,
+    started_at: new Date().toISOString(), updated_at: new Date().toISOString(), private_path: 'must not expose' };
+  const mission = { running: true, target: { root: 'root' } };
+  const job = { theorem_id: 'leaf', root_id: 'root', run_id: 'run', stage: 'PREPARE', job_status: 'ACTIVE', dispatch_state: 'RUNNING' };
+  const worker = { theorem_id: 'leaf', stage: 'PREPARE', preparation };
+  const summary = { run_id: 'run', live_workers: [worker] };
+  const build = () => buildMissionView({ mission, summary, jobs: [job] }).jobs[0];
+  assert.equal(build().preparation.files_copied, 120);
+  assert.equal(build().preparation.private_path, undefined);
+  mission.running = false; assert.equal(build().preparation, null); mission.running = true;
+  job.run_id = 'old'; assert.equal(build().preparation, null); job.run_id = 'run';
+  job.dispatch_state = 'QUEUED'; assert.equal(build().preparation, null); job.dispatch_state = 'RUNNING';
+  job.stage = worker.stage = 'CODEX'; assert.equal(build().preparation, null);
 });
 
 test('publication operations are counted distinctly and delayed jobs and handoffs remain single rows', () => {

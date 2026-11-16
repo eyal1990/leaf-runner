@@ -25,6 +25,7 @@ const ui = { missionId: params.get('mission') || null, tab: params.get('tab') ||
   artifact: '', artifactText: '', artifactSearch: '', follow: false };
 let state, csrf, busy = false, connected = false, refreshedAt = 0, toastTimer, inspectorKey, previousFocus;
 let confirmAction, fetching, artifactTimer, settingsScope;
+let credentialsScope, pendingCredentialStart;
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 $('#timezone').textContent = timezone;
 const fmtDate = value => value ? new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Not observed';
@@ -130,9 +131,30 @@ function render() {
   const focus = saveFocus();
   const selected = state.selected;
   document.title = selected ? `${missionTitle(selected.mission)} · Leaf Runner` : 'Mission Control · Leaf Runner';
-  $('#main').innerHTML = missionNavigation() + (selected ? missionPage(selected) : setupPage());
+  $('#main').innerHTML = missionNavigation() + credentialsBanner() + (selected ? missionPage(selected) : setupPage());
+  if ($('#app-settings-dialog').open) renderAppSettings();
   if ($('#history-dialog').open) renderMissionHistory();
   restoreFocus(focus);
+}
+function credentialsBanner() {
+  if (!state.credentials || state.credentials.configured) return '';
+  return `<div class="banner"><span>${icon('settings')}</span><div><strong>Add your Prove2.me API key</strong><p>Paste your key to start missions. Mission Control saves it for you.</p>${state.credentials.editable ? '<button class="text-button" data-action="credentials">Add API key</button>' : ''}</div></div>`;
+}
+function renderAppSettings() {
+  const credentials = state.credentials;
+  $('#app-credentials').innerHTML = `<h3>Prove2.me connection</h3><p class="form-note">${credentials?.source === 'environment' ? 'Using PROVE2ME_API_KEY from the launcher environment. Update it there and restart Mission Control to change keys.' : credentials?.configured ? 'Your Prove2.me API key is saved on this computer.' : 'Add your Prove2.me API key to start missions.'}</p>${credentials?.editable ? `<button class="button" data-action="credentials">${credentials.configured ? 'Update API key' : 'Add API key'}</button>` : ''}`;
+}
+function showCredentials(startMissionId = null) {
+  credentialsScope = { missionId: startMissionId ?? state.selected?.mission.id };
+  pendingCredentialStart = startMissionId;
+  $('#credentials-error').textContent = '';
+  $('#prove2me-key').value = '';
+  $('#prove2me-key').disabled = state.credentials?.editable === false;
+  $('#credentials-submit').disabled = state.credentials?.editable === false;
+  $('#credentials-submit').textContent = startMissionId ? 'Save key and start mission' : 'Save API key';
+  if (state.credentials?.editable === false) $('#credentials-error').textContent = 'Update PROVE2ME_API_KEY in the launcher environment, then restart Mission Control.';
+  $('#credentials-dialog').showModal();
+  $('#prove2me-key').focus();
 }
 function missionNavigation() {
   const missions = state.missions ?? [];
@@ -178,7 +200,9 @@ function missionPage(view) {
   // until its first save. Only that process's diagnostics describe live work.
   const currentSummary = live && (!m.managed || m.managedRunId && m.managedRunId === s?.run_id) ? s : null;
   const savedInterruption = !live && (m.processStatus === 'INTERRUPTED' || s?.status === 'INTERRUPTED') && m.processStatus !== 'ERROR';
-  const error = (savedInterruption ? null : m.error) || (live ? currentSummary?.error : s?.status !== 'INTERRUPTED' && s?.error);
+  const diagnostic = (savedInterruption ? null : m.error) || (live ? currentSummary?.error : s?.status !== 'INTERRUPTED' && s?.error);
+  const credentialFailure = !live && /ENOENT.*credentials.*\.json|Prove2\.me API key required|Fill in api_key/i.test(diagnostic ?? '');
+  const error = credentialFailure ? null : diagnostic;
   const waitingQuota = currentSummary?.codex_quota?.status === 'WAITING';
   const banner = error || currentSummary?.api_recovery?.waiting || waitingQuota || !m.managed && live || !live && s?.status === 'RUNNING';
   return `<div class="page-heading"><div><p class="eyebrow heading-kicker">${esc(m.target?.kind === 'milestone' ? 'Mission / milestone' : 'Proof mission')}</p><div class="heading-title"><h1>${esc(missionTitle(m))}</h1>${badge(agentsStopped && live ? 'Agents stopped' : paused && live ? 'Admission paused' : processLabel(m), live ? 'live' : error ? 'error' : '')}</div><p class="subtitle">Root ${esc((s?.root_status ?? 'unobserved').toLowerCase())}<span class="separator">·</span>${esc(s?.limits?.verificationMode === 'server-only' ? 'Server-only verification' : s?.limits?.verificationMode === 'local' ? 'Local verification' : 'Verification mode available on start')}<span class="separator">·</span>${live ? `Running ${age(s?.started_at ?? m.startedAt)}` : s?.finished_at ? `Saved ${fmtDate(s.finished_at)}` : 'Ready when you are'}</p></div>
@@ -192,11 +216,25 @@ function missionPage(view) {
     <div class="dashboard-grid"><div class="main-column">
     <section class="panel panel-inner"><div class="summary-label"><span class="eyebrow">Results <span class="muted">/ ${esc(periodLabel())}</span></span><span class="muted" title="Counts use confirmed submission IDs and local verdict observation times">↗</span></div><div class="metric-grid">${[['Proofs accepted', view.counts.proofs, 'teal', `${view.counts.proved_theorems} unique theorems`], ['Sketches accepted', view.counts.reductions, 'teal', `${num(view.counts.sketched_theorems)} unique theorems`], ['Disproofs accepted', view.counts.disproofs, '', 'May apply to child theorems'], ['Pending remote · Now', view.counts.pending, view.counts.unknown ? 'amber' : '', view.counts.unknown ? `${view.counts.unknown} status unknown` : 'Unfinished operations']].map(([label, value, color, note]) => `<div class="metric"><strong class="metric-number ${color}">${num(value)}</strong><span class="metric-label">${label}</span><small>${esc(note)}</small></div>`).join('')}</div></section>
     ${pipeline(view)}
+    ${preparationPanel(view, currentSummary)}
     <section class="panel panel-inner"><div class="summary-label"><span class="eyebrow">Open leaves <span class="muted">/ Now</span></span><button class="text-button" data-tab="dependencies">Dependencies ${icon('arrow')}</button></div><div class="frontier"><button class="frontier-stat text-button" data-tab="leaves" aria-label="View open leaves"><strong>${num(view.frontier?.leaves)}</strong><span>open leaf theorems</span></button><div class="frontier-stat"><strong>${num(view.frontier?.selectable)}</strong><span>selectable tasks</span></div><span class="muted">${num(view.frontier?.repairs)} repairs</span></div><p class="frontier-meta">${view.graph ? `Open leaves are unresolved theorems with no usable reduction into smaller tasks, including parents needing a new sketch and theorems already claimed by a worker. Siblings needed only by a disproved sketch are excluded. Graph observed ${fmtDate(view.graph.observed_at)} (${age(view.graph.observed_at)} ago).${s?.graph_reconciling ? ' Refreshing graph…' : ''}` : s?.graph_reconciling || m.running ? 'Refreshing graph… Frontier counts will appear when it completes.' : 'Frontier counts will appear after the runner observes the graph.'}</p></section>
     <div class="tabs" role="tablist" aria-label="Mission detail">${['work', 'leaves', 'results', 'dependencies', 'research', 'activity'].map(tab => `<button class="tab ${ui.tab === tab ? 'selected' : ''}" data-tab="${tab}" role="tab" aria-selected="${ui.tab === tab}" id="tab-${tab}" aria-controls="tab-content">${tab === 'leaves' ? 'Open leaves' : pretty(tab)}</button>`).join('')}</div>
     <div id="tab-content" role="tabpanel" aria-labelledby="tab-${ui.tab}">${({ work: workTable, leaves: openLeavesPanel, results: resultsPanel, dependencies: dependencyPanel, research: researchPanel, activity: activityPanel }[ui.tab] ?? workTable)(view)}</div>
     ${ui.tab === 'work' ? recentResults(view) : ''}
     </div><div class="side-column">${capacityCard(view)}${attentionCard(view, unresolved)}${runnerCard(view)}</div></div>`;
+}
+function preparationCounts(status) {
+  return status?.phase === 'copy' ? `${num(status.files_copied ?? 0)} files copied · ${((status.bytes_copied ?? 0) / 1024 ** 2).toFixed(1)} MiB copied` : '';
+}
+function preparationDetails(status) {
+  const recent = Date.now() - Date.parse(status.updated_at) < 20000;
+  return `<p class="preparation-message">${esc(status.message)}</p>${preparationCounts(status) ? `<p class="preparation-counts">${esc(preparationCounts(status))}</p>` : ''}<p class="capacity-help">Elapsed ${age(status.started_at)} · Last update ${age(status.updated_at)} ago</p>${recent ? '<div class="preparation-bar" role="progressbar" aria-label="Workspace preparation in progress" aria-valuetext="In progress; total size unknown"><span></span></div>' : '<p class="capacity-help amber">No recent preparation update. Check the runner connection and terminal for details.</p>'}`;
+}
+function preparationPanel(view, currentSummary) {
+  if (!currentSummary) return '';
+  const jobs = view.jobs.filter(job => job.running && job.preparation);
+  if (!jobs.length) return '';
+  return `<section class="panel workspace-preparation" aria-label="Workspace preparation"><div class="panel-heading"><h2>Preparing workspaces</h2></div><p class="panel-note">First-time setup can take several minutes. Progress updates automatically; a large file can take time before the counters increase.</p><div role="status" aria-live="polite">${jobs.map(job => `<div class="preparation-job"><button class="text-button" data-inspect="${esc(job.theorem_id)}">${esc(job.theorem_name)}</button>${preparationDetails(job.preparation)}</div>`).join('')}</div></section>`;
 }
 function pipeline(view) {
   const sources = view ? [{ mission: view.mission, jobs: view.jobs }] : state.missions.map(row => ({ mission: row.mission, jobs: row.currentWork ?? [] }));
@@ -250,7 +288,8 @@ function runnerCard(view) {
 function workTable(view) {
   let rows = ui.filter === 'ready' ? (view.summary?.ready_work ?? []).map(row => ({ ...row, ready: true, stage: '',
     total_attempts: row.totalAttempts, context_attempts: row.attemptsInCurrentContext })) : view.jobs.filter(j => ui.filter === 'all' || ui.filter === 'active' && j.job_status === 'ACTIVE'
-    || ui.filter === 'waiting' && j.job_status === 'ACTIVE' && !j.running || ui.filter === 'attention' && needsAttention(j));
+    || ui.filter === 'waiting' && (j.job_status === 'ACTIVE' && !j.running || j.job_status === 'READY' && j.waiting_reason)
+    || ui.filter === 'attention' && needsAttention(j));
   rows = rows.filter(j => (!ui.stage || j.stage === ui.stage) && (!ui.search || `${j.theorem_name} ${j.theorem_id}`.toLowerCase().includes(ui.search.toLowerCase()))
     && (!ui.model || (j.worker_model ?? j.model) === ui.model) && (!ui.taskKind || (j.task_kind ?? (j.operation === 'reconsider_reduction' ? 'parent' : 'leaf')) === ui.taskKind));
   rows.sort(ui.sort === 'elapsed' ? (a, b) => (Date.parse(a.updated_at) || 0) - (Date.parse(b.updated_at) || 0)
@@ -301,7 +340,7 @@ async function renderInspector(force = false) {
   if (!ui.theorem || !view) { panel.hidden = true; inspectorKey = null; clearInterval(artifactTimer); return; }
   const job = view.jobs.find(j => j.theorem_id === ui.theorem), node = view.graph?.nodes.find(n => n.theorem_id === ui.theorem) ?? (view.root?.theorem_id === ui.theorem ? view.root : null);
   const ready = view.summary?.ready_work.find(j => j.theorem_id === ui.theorem);
-  const key = JSON.stringify([ui.theorem, job?.revision, job?.running, node?.status]);
+  const key = JSON.stringify([ui.theorem, job?.revision, job?.running, job?.preparation?.updated_at, node?.status]);
   if (!force && key === inspectorKey) return;
   inspectorKey = key;
   const scroll = panel.scrollTop;
@@ -311,6 +350,7 @@ async function renderInspector(force = false) {
     <section class="inspector-section"><h3>Exact statement</h3>${node?.formal_statement ? `<pre>${esc(node.formal_statement)}</pre>${node.preamble ? `<details><summary>Preamble</summary><pre>${esc(node.preamble)}</pre></details>` : ''}` : '<p class="capacity-help">No theorem statement in this observation.</p>'}</section>
     ${ready ? `<section class="inspector-section"><h3>Scheduler selection</h3><p class="capacity-help">${esc(selectionReason(ready))}</p>${detail('Score', ready.score)}${detail('Operation', ready.operation)}${ready.cycle_members ? `<p class="capacity-help">Cycle members: ${esc(ready.cycle_members.map(m => m.theorem_name ?? m.theorem_id).join(', '))}</p>` : ''}</section>` : ''}
     ${job ? `<section class="inspector-section"><h3>Current job & ownership</h3>${detail('Job ID', job.job_id)}${detail('Attempt ID', job.attempt_id)}${detail('Run ID', job.run_id)}${detail('Revision', job.revision)}${detail('Stage / operation', `${job.stage ?? '—'} / ${job.operation ?? '—'}`)}${detail('Dispatch / state', `${job.dispatch_state ?? '—'} / ${job.status ?? job.job_status}`)}${detail('Worker', job.running ? job.worker_model ?? job.stage : 'No active worker')}${detail('Attempts · lifetime / context', `${num(job.total_attempts)} / ${num(job.context_attempts)}`)}${detail('Next poll', job.next_poll_at ? fmtDate(job.next_poll_at) : 'No scheduled poll')}${Object.entries(job.stage_wait_ms ?? {}).map(([stage, ms]) => detail(`${pretty(stage)} wait`, `${Math.round(ms / 1000)}s`)).join('')}${job.remote_issued ? '<p class="capacity-help amber">The coordinator owns reconciliation. Restarting preserves the existing immutable operation identity.</p>' : ''}</section>
+    ${job.preparation ? `<section class="inspector-section"><h3>Workspace preparation</h3>${preparationDetails(job.preparation)}</section>` : ''}
     ${job.waiting_reason ? `<section class="inspector-section"><h3>Current blocker</h3><pre>${esc(job.waiting_reason)}</pre><p class="capacity-help">${job.next_poll_at ? `Next retry ${fmtDate(job.next_poll_at)}.` : 'The coordinator will retry when eligible.'}</p></section>` : ''}
     ${job.remote_operations.length ? `<section class="inspector-section"><h3>Remote operations</h3>${job.remote_operations.map(op => `<div class="history-item"><span>${esc(pretty(op.status))}</span><div class="mono">${esc(op.operation_id)}<br>Submission: ${esc(op.submission_id ?? 'Unknown')}<br><small>Started ${fmtDate(op.started_at)} · checked ${fmtDate(op.checked_at)}</small></div></div>`).join('')}</section>` : ''}
     <section class="inspector-section"><h3>Attempt timeline</h3>${job.history.length ? job.history.slice().reverse().slice(0, 40).map(event => `<div class="history-item"><span>#${num(event.attempt)}</span><div><strong>${esc(pretty(event.result))}</strong><br><small>${fmtDate(event.observed_at)} · ${esc(event.model ?? 'Saved outcome')}</small></div></div>`).join('') : '<p class="capacity-help">No structured attempt history saved.</p>'}</section>
@@ -385,12 +425,18 @@ async function command(action, extras = {}) {
       controlRevision: state.selected?.summary?.operator?.revision, ...extras }) });
     if (result.status === 'REJECTED') throw new Error(result.error);
     if (result.status === 'PENDING') { toast('The command was received. Refresh to inspect the saved result before retrying.'); return result; }
-    toast(action === 'set-runtime-settings' ? (state.selected?.mission.running ? 'Config file saved and settings applied to new work.' : 'Config file saved for the next start.') : action === 'set-config' ? 'Configuration saved for the next runner start.' : action === 'check-quota-now' ? 'Checking quota recovery now.' : action === 'set-prompt-variant' ? 'Prompt variant saved for new proof attempts.' : action === 'add' ? 'Mission is ready.' : action === 'stop-agents' ? 'Agents stopped. Validation and server work continue.' : action === 'resume-agents' ? 'Agents resumed. Other operator pauses remain in place.' : action === 'stop' ? 'Runner stopped and saved. Existing server submissions may continue.' : action === 'start' ? 'Runner starting. Account limits will be checked again.' : 'Operator pause saved by the coordinator.');
+    const credentialsRequired = result.result?.status === 'CREDENTIALS_REQUIRED';
+    toast(credentialsRequired ? 'Add your Prove2.me API key to start this mission.' : action === 'set-runtime-settings' ? (state.selected?.mission.running ? 'Config file saved and settings applied to new work.' : 'Config file saved for the next start.') : action === 'set-config' ? 'Configuration saved for the next runner start.' : action === 'check-quota-now' ? 'Checking quota recovery now.' : action === 'set-prompt-variant' ? 'Prompt variant saved for new proof attempts.' : action === 'add' ? 'Mission is ready.' : action === 'stop-agents' ? 'Agents stopped. Validation and server work continue.' : action === 'resume-agents' ? 'Agents resumed. Other operator pauses remain in place.' : action === 'stop' ? 'Runner stopped and saved. Existing server submissions may continue.' : action === 'start' ? 'Runner starting. Account limits will be checked again.' : 'Operator pause saved by the coordinator.');
     if (action === 'add') {
       Object.assign(ui, { missionId: result.result.missionId, theorem: null, tab: 'work', range: 'run', filter: 'active', stage: '', search: '', model: '', taskKind: '', sort: 'name', since: '', until: '', follow: false });
       clearInterval(artifactTimer); updateUrl();
     }
-    await refresh(); return result;
+    await refresh();
+    if (credentialsRequired) {
+      if ($('#add-dialog').open) $('#add-dialog').close();
+      showCredentials(result.result.missionId);
+    }
+    return result;
   } finally { busy = false; document.querySelectorAll('[data-action]').forEach(el => { if (el.disabled && el.dataset.action === action) el.disabled = false; }); }
 }
 document.addEventListener('click', async event => {
@@ -439,6 +485,8 @@ document.addEventListener('click', async event => {
       case 'refresh': await refresh(); toast('Saved runner status refreshed.'); break;
       case 'menu': { const menu = $('#mission-menu'); menu.hidden = !menu.hidden; event.target.closest('button').setAttribute('aria-expanded', String(!menu.hidden)); break; }
       case 'settings': showSettings(view); break;
+      case 'app-settings': renderAppSettings(); $('#app-settings-dialog').showModal(); break;
+      case 'credentials': $('#app-settings-dialog').close(); showCredentials(); break;
       case 'check-quota-now': await command('check-quota-now'); break;
       case 'all-work': ui.tab = 'work'; ui.filter = 'all'; ui.stage = ''; updateUrl(); render(); break;
       case 'limits': event.target.closest('button').disabled = true; await api('/api/limits', { method: 'POST' }); await refresh(); toast(state.account.error ? 'Account read failed; previous usage was retained.' : 'Account limits checked. Coordinator recovery gates remain unchanged.'); break;
@@ -483,6 +531,29 @@ document.addEventListener('change', async event => {
     updateUrl(); await refresh();
   }
 });
+$('#credentials-dialog').addEventListener('close', () => {
+  $('#prove2me-key').value = ''; pendingCredentialStart = null; credentialsScope = null;
+});
+$('#credentials-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = $('#credentials-submit'); button.disabled = true;
+  const startMissionId = pendingCredentialStart;
+  try {
+    const saved = await api('/api/credentials', { method: 'POST', body: JSON.stringify({ ...credentialsScope, apiKey: $('#prove2me-key').value }) });
+    $('#prove2me-key').value = '';
+    if (saved.missionRefreshError) {
+      await refresh();
+      throw new Error(`API key saved, but mission lookup failed: ${saved.missionRefreshError}`);
+    }
+    $('#credentials-dialog').close();
+    await refresh();
+    if (startMissionId) await command('start', { missionId: startMissionId, revision: state.revision });
+    else toast('Prove2.me API key saved on this computer.');
+  } catch (error) {
+    if ($('#credentials-dialog').open) $('#credentials-error').textContent = error.message;
+    else toast(error.message);
+  } finally { button.disabled = false; }
+});
 $('#add-form').addEventListener('submit', async event => {
   event.preventDefault(); const submit = event.target.querySelector('[type=submit]'); submit.disabled = true;
   try {
@@ -516,9 +587,13 @@ async function boot() {
     const session = token ? await api('/api/session', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }) : await api('/api/session');
     csrf = session.csrf; history.replaceState(null, '', location.pathname + location.search);
     await refresh();
+    if (state?.credentials?.configured === false) showCredentials();
     setInterval(() => { if (!document.hidden) void refresh(); }, 4000);
     setInterval(renderConnection, 1000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
+    // Reopening the dashboard retries stale discovery/authentication using the
+    // saved credentials. Polling stays local and never repeats this API lookup.
+    void api('/api/refresh-missions', { method: 'POST' }).catch(error => toast(error.message));
   } catch (error) { $('#main').innerHTML = `<div class="loading-state"><span class="eyebrow">Local session required</span><h1>Open Mission Control from your terminal</h1><p>${esc(error.message)}</p><p class="subtitle">The full link includes your private local session. It stays on this computer.</p></div>`; renderConnection(); }
 }
 void boot();

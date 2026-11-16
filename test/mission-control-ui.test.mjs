@@ -35,6 +35,36 @@ function snapshot(id = 'first') {
     account: { windows: { primary: { used_percent: 34, window_minutes: 300 } } }, totals: {} };
 }
 
+test('workspace progress shows counters, elapsed time and freshness without a fabricated percentage', () => {
+  const ui = browser(); ui.context.fixture = snapshot(); ui.run('state = fixture');
+  const view = ui.context.fixture.selected;
+  view.mission.managedRunId = 'run'; view.summary.run_id = 'run';
+  Object.assign(view.jobs[0], { stage: 'PREPARE', running: true, preparation: {
+    phase: 'copy', message: 'Copying Mathlib <sources>', files_copied: 2400, bytes_copied: 64 * 1024 ** 2,
+    started_at: new Date(Date.now() - 185000).toISOString(), updated_at: new Date().toISOString(),
+  } });
+  let html = ui.run('missionPage(state.selected)');
+  assert.match(html, /Preparing workspaces/);
+  assert.match(html, /Copying Mathlib &lt;sources&gt;/);
+  assert.match(html, /2,400 files copied · 64\.0 MiB copied/);
+  assert.match(html, /Elapsed 3m \d+s · Last update 0s ago/);
+  assert.match(html, /role="progressbar" aria-label="Workspace preparation in progress"/);
+  assert.doesNotMatch(html, /aria-valuenow/);
+  assert.doesNotMatch(html, /No recent preparation update/);
+  view.jobs[0].preparation.updated_at = new Date(Date.now() - 60000).toISOString();
+  html = ui.run('missionPage(state.selected)');
+  assert.match(html, /No recent preparation update/);
+  assert.doesNotMatch(html, /role="progressbar" aria-label="Workspace preparation/);
+  for (const phase of ['seed', 'waiting', 'reset', 'dependencies']) {
+    view.jobs[0].preparation.phase = phase;
+    assert.doesNotMatch(ui.run('missionPage(state.selected)'), /files copied/);
+  }
+  view.mission.running = false;
+  assert.doesNotMatch(ui.run('missionPage(state.selected)'), /Preparing workspaces/);
+  view.mission.running = true; view.mission.managedRunId = 'new-run';
+  assert.doesNotMatch(ui.run('missionPage(state.selected)'), /Preparing workspaces/);
+});
+
 test('agent stop and resume are prominent while independent pause controls remain available', () => {
   const ui = browser(); ui.context.fixture = snapshot(); ui.run('state = fixture');
   let html = ui.run('missionPage(state.selected)');
@@ -85,6 +115,23 @@ test('genuine stopped-run failures are explicitly labeled as previous', () => {
   assert.match(ui.run('missionPage(state.selected)'), /Previous run failed: Startup failed/);
   ui.run("state.selected.mission.error = null; state.selected.summary = { status: 'ERROR', error: 'Server failed <details>' }");
   assert.match(ui.run('missionPage(state.selected)'), /Previous run failed: Server failed &lt;details&gt;/);
+});
+
+test('credential setup replaces missing-file diagnostics and keeps the key in a password field', () => {
+  const ui = browser(); ui.context.fixture = snapshot(); ui.run('state = fixture');
+  Object.assign(ui.context.fixture.selected.mission, { running: false, processStatus: 'ERROR',
+    error: "ENOENT: no such file or directory, open 'C:\\Projects\\leaf-runner\\credentials.json'" });
+  ui.context.fixture.credentials = { configured: false, source: 'file', editable: true };
+  assert.doesNotMatch(ui.run('missionPage(state.selected)'), /ENOENT|Previous run failed/);
+  assert.match(ui.run('credentialsBanner()'), /Add your Prove2.me API key/);
+  ui.context.fixture.credentials.configured = true;
+  assert.doesNotMatch(ui.run('missionPage(state.selected)'), /ENOENT|Previous run failed/);
+  assert.equal(ui.run('credentialsBanner()'), '');
+  ui.run('renderAppSettings()');
+  assert.match(ui.element('#app-credentials').innerHTML, /Update API key/);
+  assert.match(shell, /aria-label="App settings"/);
+  assert.match(shell, /id="app-settings-dialog"/);
+  assert.match(shell, /id="prove2me-key" type="password" required maxlength="4096" autocomplete="off"/);
 });
 
 test('one settings form shows the saved prompt and disables all editing for external runners', () => {
@@ -304,6 +351,22 @@ test('a newer coordinator quota observation replaces an older account sampler re
   assert.match(ui.run('capacityCard(state.selected)'), /66% left/);
 });
 
+test('failed preparation remains visible in waiting and attention with no active worker', () => {
+  const ui = browser(); ui.context.fixture = snapshot();
+  const job = ui.context.fixture.selected.jobs[0];
+  Object.assign(job, { job_status: 'READY', stage: 'PREPARE', running: false, dispatch_state: 'QUEUED',
+    waiting_reason: 'Previous PREPARE failure (ENOSPC): Cannot copy <Mathlib>',
+    next_poll_at: new Date(Date.now() + 60000).toISOString() });
+  ui.run('state = fixture');
+  assert.match(ui.run('missionPage(state.selected)'), /Work blocked/);
+  for (const filter of ['waiting', 'attention']) {
+    const table = ui.run(`ui.filter = '${filter}'; workTable(state.selected)`);
+    assert.match(table, /ENOSPC.*&lt;Mathlib&gt;/);
+    assert.match(table, /Next check/);
+    assert.match(table, /data-inspect="leaf"/);
+  }
+});
+
 test('infrastructure blockers appear in current work, attention and the work table with escaped diagnostics', () => {
   const ui = browser(); ui.context.fixture = snapshot();
   const job = ui.context.fixture.selected.jobs[0];
@@ -384,9 +447,15 @@ test('changing the time range during a refresh discards the old response and fet
 });
 
 test('the four-second poll keeps refreshing while a command is waiting for acknowledgement', async () => {
-  let reads = 0;
-  const ui = browser(async url => ({ ok: true, json: async () => {
+  let reads = 0, recoveries = 0;
+  const ui = browser(async (url, options) => ({ ok: true, json: async () => {
     if (url === '/api/session') return { csrf: 'token' };
+    if (url === '/api/refresh-missions') {
+      recoveries++;
+      assert.equal(options.method, 'POST');
+      assert.equal(options.headers['X-CSRF-Token'], 'token');
+      return { status: 'REFRESHING' };
+    }
     reads++;
     return snapshot();
   } }));
@@ -395,5 +464,6 @@ test('the four-second poll keeps refreshing while a command is waiting for ackno
   ui.intervals.find(interval => interval.ms === 4000).fn();
   await ui.run('fetching');
   assert.equal(reads, 2);
+  assert.equal(recoveries, 1);
   assert.match(ui.element('#connection').innerHTML, /refreshes every 4s/);
 });

@@ -12,12 +12,29 @@
   <a class="skip-link" href="#main">Skip to dashboard</a>
   <div class="app-shell">
     <div class="workspace">
-      <header class="topbar"><a class="brand" href="/" aria-label="Leaf Runner Mission Control"><span class="brand-mark" aria-hidden="true">◇</span><span>Leaf Runner</span></a><div class="connection" id="connection" role="status"><span class="dot"></span> Connecting…</div></header>
+      <header class="topbar"><a class="brand" href="/" aria-label="Leaf Runner Mission Control"><span class="brand-mark" aria-hidden="true">◇</span><span>Leaf Runner</span></a><div class="topbar-actions"><div class="connection" id="connection" role="status"><span class="dot"></span> Connecting…</div><button class="button icon-only" data-action="app-settings" aria-label="App settings" title="App settings"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="white"/><circle cx="15" cy="17" r="3" fill="white"/></svg></button></div></header>
       <main id="main" tabindex="-1"><div class="loading-state"><span class="eyebrow">Mission Control</span><h1>Connecting to your mission</h1><p>Reading the saved mission and runner state.</p></div></main>
       <footer class="workspace-footer"><span>Leaf Runner <span class="muted">/</span> Mission Control<br>Independently maintained by eyal1990. Not affiliated with, sponsored by, or endorsed by prove2.me or OpenAI.</span><span id="timezone"></span></footer>
     </div>
   </div>
   <aside id="inspector" class="inspector" aria-label="Theorem inspector" hidden></aside>
+  <dialog id="app-settings-dialog" aria-labelledby="app-settings-title">
+    <div class="dialog-heading"><span class="eyebrow">Leaf Runner</span><button type="button" class="icon-button" data-close="app-settings-dialog" aria-label="Close">×</button></div>
+    <h2 id="app-settings-title">App settings</h2>
+    <div id="app-credentials"></div>
+    <div class="dialog-actions"><button class="button" data-close="app-settings-dialog">Close</button></div>
+  </dialog>
+  <dialog id="credentials-dialog" aria-labelledby="credentials-title">
+    <form id="credentials-form">
+      <div class="dialog-heading"><span class="eyebrow">Local connection</span><button type="button" class="icon-button" data-close="credentials-dialog" aria-label="Close">×</button></div>
+      <h2 id="credentials-title">Connect to Prove2.me</h2>
+      <p class="subtitle">Sign in at <a href="https://prove2.me" target="_blank" rel="noreferrer">prove2.me</a>, open the account menu, and choose <strong>API key</strong>. Paste your key below.</p>
+      <label for="prove2me-key">Prove2.me API key</label><input id="prove2me-key" type="password" required maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="credentials-note">
+      <p id="credentials-note" class="form-note">Saved on this computer in the runner's local credentials file. Codex sign-in is separate. Your key is never included in dashboard reports.</p>
+      <p id="credentials-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" class="button" data-close="credentials-dialog">Cancel</button><button id="credentials-submit" class="button primary" type="submit">Save API key</button></div>
+    </form>
+  </dialog>
   <dialog id="history-dialog" aria-labelledby="history-title">
     <div class="dialog-heading"><span class="eyebrow">Saved work</span><button type="button" class="icon-button" data-close="history-dialog" aria-label="Close">×</button></div>
     <h2 id="history-title">Previous missions</h2>

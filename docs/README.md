@@ -18,6 +18,7 @@ that are useful when operating or contributing to the runner.
 | [Periodic mission research](mission-research.md) | Advisory reviews, resource downloads, isolation, and recovery |
 | [Theorem-library discovery](theorem-library.md) | Read-only search tools, evidence, budgets, and validation boundaries |
 | [Mission Control design](mission-control-ux.md) | Dashboard semantics, implementation boundaries, and deferred capabilities |
+| [Claude support plan](claude-support-plan.md) | Proposed provider integration, affected files, migration, and validation |
 
 ## Contributing documentation
 

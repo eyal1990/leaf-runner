@@ -11,7 +11,7 @@ import { WorkSelection } from '../work-selection.mjs';
 import { CodexQuotaError, codexQuotaFailure, QUOTA_CHECK_INTERVAL as HOUR } from '../codex-quota.mjs';
 import { validHistory } from '../attempt-history.mjs';
 import defaults from '../runner-config.json' with { type: 'json' };
-import { readJson } from '../runner-state.mjs';
+import { readJson, save } from '../runner-state.mjs';
 import { ProofStoragePaused } from '../proof-storage-recovery.mjs';
 
 const barrier = () => {
@@ -457,6 +457,78 @@ async function fixture(t, ids = ['a', 'b']) {
     disproveRoot: () => { externalRootStatus = 'Disproved'; },
     run: () => runTarget(client, target, options, hooks) };
 }
+
+test('preparation failures report the error and retry time instead of silently waiting for new leaves', async t => {
+  const h = await fixture(t, ['a']), allocate = h.hooks.workspace;
+  h.options.recovery = { initialDelayMs: 60000, maxDelayMs: 900000 };
+  const message = 'ENOSPC: no space left on device, copying Mathlib.olean';
+  const logs = [];
+  t.mock.method(console, 'log', line => logs.push(line));
+  const previous = await h.store.ensure('a', { attempts: 3 });
+  Object.assign(previous, { job_status: 'READY', status: 'REPAIR_REQUIRED', root_id: 'root',
+    recovery_failure: { origin: 'job_error', message, count: 5, at: new Date().toISOString() },
+    retry_after: new Date(Date.now() - 1).toISOString() });
+  await h.store.replace(previous, previous.revision);
+  let calls = 0, snapshot;
+  h.hooks.workspace = async (...args) => {
+    if (++calls === 1) throw Object.assign(new Error(message), { code: 'ENOSPC' });
+    return allocate(...args);
+  };
+  h.hooks.onCheckpoint = summary => {
+    if (/Waiting to retry PREPARE after failure/.test(summary.waiting_reason ?? '')) snapshot = summary;
+  };
+  const run = h.run();
+  try {
+    await until(() => snapshot);
+    const job = await h.store.read('a');
+    assert.equal(job.selection.score, -50, 'reproduces the supplied zero-attempt negative score');
+    assert.equal(job.attempt_count, 0);
+    assert.equal(job.recovery_failure.count, 6);
+    assert.equal(job.recovery_failure.stage, 'PREPARE');
+    assert.equal(job.recovery_failure.operation, 'reconstruct');
+    assert.equal(job.recovery_failure.code, 'ENOSPC');
+    assert.equal(snapshot.pipeline.localActive, 0);
+    assert.match(snapshot.waiting_reason, /ENOSPC.*Mathlib\.olean/);
+    assert.ok(snapshot.waiting_reason.includes(job.retry_after));
+    assert.ok(logs.some(line => /PREPARE\] reconstruct failed \(ENOSPC\)/.test(line) && line.includes(job.retry_after)));
+    assert.equal(h.models.length, 0);
+  } finally { h.controller.abort(new Error('restart after preparation failure')); await assert.rejects(run, /restart after preparation failure/); }
+  // Simulate returning after the persisted backoff expires, without a real wait.
+  const saved = await h.store.read('a');
+  saved.retry_after = new Date(Date.now() - 1).toISOString();
+  await save(h.store.path('a'), saved);
+  h.options.signal = undefined;
+  assert.equal((await h.run()).completed, true);
+  assert.equal(h.models.length, 1);
+  assert.equal((await h.store.read('a')).attempt_count, 1);
+});
+
+test('workspace progress reaches live checkpoints and clears after preparation', async t => {
+  const h = await fixture(t, ['a']), gate = barrier(), allocate = h.hooks.workspace;
+  let pipeline, callback;
+  h.hooks.onControlReady = p => { pipeline = p; };
+  h.hooks.workspace = async (env, options) => {
+    callback = options.onWorkspaceProgress;
+    callback({ phase: 'copy', message: 'Copying Mathlib', files_copied: 120, bytes_copied: 4096,
+      started_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    await gate.promise;
+    return allocate(env, options);
+  };
+  const run = h.run();
+  try {
+    await until(async () => (await readJson(join(h.runs, 'last-run.json')))?.live_workers?.[0]?.preparation?.files_copied === 120);
+    const checkpoint = await readJson(join(h.runs, 'last-run.json'));
+    assert.equal(checkpoint.live_workers[0].stage, 'PREPARE');
+    assert.equal(checkpoint.live_workers[0].preparation.bytes_copied, 4096);
+    callback({ phase: 'copy', message: 'Copying Mathlib', files_copied: 240, bytes_copied: 8192 });
+    await until(async () => (await readJson(join(h.runs, 'last-run.json')))?.live_workers?.[0]?.preparation?.files_copied === 240);
+    gate.release();
+    assert.equal((await run).completed, true);
+    callback({ phase: 'copy', message: 'stale callback', files_copied: 999 });
+    assert.equal(pipeline.controls.get('a')?.preparation, undefined);
+    assert.deepEqual((await readJson(join(h.runs, 'last-run.json'))).live_workers, []);
+  } finally { gate.release(); h.controller.abort(new Error('cleanup')); await run.catch(() => {}); }
+});
 
 test('quota waits stop Codex dispatch, continue server work, and recover after an early hourly reset with one probe', async t => {
   const h = await fixture(t, ['a', 'b', 'c']), server = barrier(), probe = barrier();

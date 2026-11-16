@@ -58,25 +58,16 @@ See the [official Codex authentication guide](https://learn.chatgpt.com/docs/aut
 if you need another sign-in method.
 
 For Prove2.me, sign in at [prove2.me](https://prove2.me), open the account menu,
-and choose **API key**. Create your local credentials file **before launching**:
+and choose **API key**. Launch Mission Control in the next step and paste your
+key into **Connect to Prove2.me**. The dashboard saves it locally for future
+runs; you do not need to create or edit files. Use **Update API key** to replace it.
 
-```powershell
-# Windows PowerShell (run once in the repository folder)
-Copy-Item credentials.example.json credentials.json
-notepad credentials.json
-```
-
-On macOS/Linux, use `cp credentials.example.json credentials.json` and open the
-new file in your editor. Replace the placeholder with your key, then save:
-
-```json
-{ "api_key": "YOUR_PROVE2ME_API_KEY" }
-```
-
-`credentials.json` is ignored by Git and loaded automatically from the project
-folder. Keep the placeholder in the tracked example. The alternative shell
-variable `PROVE2ME_API_KEY` takes precedence; `.env` files are not loaded
-automatically. Codex authentication and the Prove2.me key are separate.
+For headless use, set `PROVE2ME_API_KEY` in your shell or copy
+`credentials.example.json` to `credentials.json` and fill in `api_key`.
+`credentials.json` is ignored by Git. `PROVE2ME_API_KEY` takes precedence over
+saved credentials; when set, update it in your launcher environment and restart
+Mission Control. `.env` files are not loaded automatically. Codex authentication
+and the Prove2.me key are separate.
 
 ### 3. Start Mission Control and enter your mission
 
