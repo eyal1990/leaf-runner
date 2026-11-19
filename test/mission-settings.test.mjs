@@ -10,7 +10,7 @@ const picker = (family, version, effort) => ({ querySelector: key => ({ value: {
 }[key] }) });
 
 test('model picker serializes supported choices, preserves versions, and excludes Luna Ultra', () => {
-  for (const [family, version] of [['luna', '6'], ['terra', '6.1'], ['sol', '6.1'], ['astra', '6']]) {
+  for (const [family, version] of [['luna', '6'], ['terra', '6.1'], ['sol', '6'], ['sol', '6.1'], ['sol', '6.2'], ['astra', '6'], ['astra', '6.2']]) {
     assert.equal(readModelPicker(picker(family, version, 'high')), `${family}-${version}-high`);
     const html = renderModelPicker('test', `${family}-${version}-high`);
     assert.match(html, new RegExp(`data-model-version value="${version}"`));

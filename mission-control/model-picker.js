@@ -1,16 +1,16 @@
 // Codex model profiles. Keep versions and supported efforts together so every
 // consumer uses the same controls and serialization.
-// https://learn.chatgpt.com/docs/models (verified 2026-11-04)
+// https://learn.chatgpt.com/docs/models (verified 2026-11-19)
 export const MODEL_CATALOG = {
   luna: { label: 'Luna', versions: ['6'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
   terra: { label: 'Terra', versions: ['6.1'], efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
-  sol: { label: 'Sol', versions: ['6.1', '6'], efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
-  astra: { label: 'Astra', versions: ['6'], efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
+  sol: { label: 'Sol', versions: ['6.2', '6.1', '6'], efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
+  astra: { label: 'Astra', versions: ['6.2', '6'], efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
 };
 const labels = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', ultra: 'Ultra' };
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const modelName = (family, version) => `GPT-${version} ${MODEL_CATALOG[family].label}`;
-const modelChoices = [['sol', '6.1'], ['astra', '6'], ['terra', '6.1'], ['sol', '6'], ['luna', '6']];
+const modelChoices = [['astra', '6.2'], ['sol', '6.2'], ['sol', '6.1'], ['astra', '6'], ['terra', '6.1'], ['sol', '6'], ['luna', '6']];
 const chevron = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 6 3 3 3-3" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 function effortControl(id, model, effort) {

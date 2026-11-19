@@ -320,7 +320,8 @@ test('live escalation settings reach copied workers, persist across restart, and
   assert.equal(attemptModel(4, workerOptions, stalled).model, 'gpt-6-luna', 'the configured rescue cap is enforced');
   const saved = await readRunnerConfig(h.configPath);
   assert.deepEqual(saved.values.incompleteEscalation, { after: 2, model: 'astra-6-max', maxAttempts: 1 });
-  const restored = new Pipeline({}, { root: 'root' }, { runs: h.runs, configPath: h.configPath, pipeline: saved.values });
+  const restored = new Pipeline({}, { root: 'root' }, { runs: h.runs, configPath: h.configPath,
+    pipeline: { ...saved.values, attemptModels: ['luna-6-high'] } });
   await restored.operator.load();
   assert.deepEqual(restored.limits.incompleteEscalation, p.limits.incompleteEscalation);
   assert.equal(attemptModel(4, restored.options, stalled).model, 'gpt-6-luna');
@@ -472,7 +473,7 @@ test('an explicit config is edited in place and saving replaces matching CLI ove
     settings: { attemptModels: ['sol-6.1-high'], queues: { CODEX: { concurrency: 3 }, SERVER: { concurrency: 8 } }, maxRemoteJobs: 42 } });
   assert.equal(result.status, 'APPLIED', result.error);
   assert.deepEqual((await readJson(custom)).attemptModels, ['sol-6.1-high']);
-  assert.equal((await readJson(h.configPath)).attemptModels[0], 'luna-6-high');
+  assert.equal((await readJson(h.configPath)).attemptModels[0], 'astra-6.2-max');
   const argv = h.control.findMission(missionId).argv;
   assert.ok(argv.includes(`--config=${custom}`));
   assert.ok(!argv.some(value => /^--(model|codex-concurrency|max-remote-jobs)(=|$)/.test(value)));

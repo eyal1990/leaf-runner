@@ -6,9 +6,35 @@ import { pipelineLimits } from '../pipeline.mjs';
 import defaults from '../runner-config.json' with { type: 'json' };
 
 test('the default schedule follows the project config for every lifetime attempt', () => {
+  assert.deepEqual(defaults.attemptModels, ['astra-6.2-max']);
   for (const options of [{}, { pipeline: pipelineLimits() }]) {
     const schedule = defaults.attemptModels.length ? defaults.attemptModels : ['luna-6-high'];
     for (const n of [1, 2, 3, 26]) assert.deepEqual(attemptModel(n, options), modelProfile(schedule[Math.min(n - 1, schedule.length - 1)]));
+  }
+});
+
+test('GPT-6.2 profiles reach Codex with their configured reasoning effort', () => {
+  for (const family of ['astra', 'sol']) {
+    for (const effort of ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']) {
+      assert.deepEqual(attemptModel(1, { attemptModels: [`${family}-6.2-${effort}`] }), {
+        model: `gpt-6.2-${family}`, reasoningEffort: effort, modelProfile: `${family}-6.2-${effort}`,
+      });
+    }
+  }
+});
+
+test('escalation recognizes GPT-6.2 versions and preserves stronger configured models', () => {
+  const state = stalled();
+  for (const profile of ['astra-6.2-high', 'astra-6.2-max', 'sol-6.2-high']) {
+    const selected = attemptModel(3, { attemptModels: [profile] }, state);
+    assert.equal(selected.modelProfile, profile);
+    assert.equal(selected.escalation.automatic, false);
+  }
+  for (const base of ['sol-6.1-high', 'sol-6.2-high', 'astra-6-max']) {
+    const selected = attemptModel(3, { attemptModels: [base],
+      incompleteEscalation: { model: 'astra-6.2-max' } }, state);
+    assert.equal(selected.modelProfile, 'astra-6.2-max');
+    assert.equal(selected.escalation.automatic, true);
   }
 });
 
@@ -75,7 +101,7 @@ test('historical Terra calls that did not escalate do not consume a Sol rescue',
   const state = stalled('gpt-6.1-terra');
   state.history.push({ ...outcome(3, 'started'), model: 'gpt-6.1-terra',
     escalation: { ...incompleteEscalation(state), automatic: false } }, outcome(3, 'incomplete', 'initial', 'gpt-6.1-terra'));
-  const decision = attemptModel(4, { incompleteEscalation: { maxAttempts: 1 } }, state);
+  const decision = attemptModel(4, { attemptModels: ['terra-6.1-medium'], incompleteEscalation: { maxAttempts: 1 } }, state);
   assert.equal(decision.model, 'gpt-6.1-sol');
   assert.equal(decision.escalation.attempts, 0);
 });
@@ -152,7 +178,7 @@ test('three reworded Terra blockers escalate without treating research notes as 
   const state = rewordedState();
   state.history.forEach(event => { event.failure.stagnation.model = 'gpt-6.1-terra'; });
   assert.equal(incompleteEscalation({ ...state, history: state.history.slice(0, 2) }), null);
-  const decision = attemptModel(4, {}, JSON.parse(JSON.stringify(state)));
+  const decision = attemptModel(4, { attemptModels: ['terra-6.1-medium'] }, JSON.parse(JSON.stringify(state)));
   assert.equal(decision.model, 'gpt-6.1-sol');
   assert.equal(decision.escalation.automatic, true);
   assert.equal(decision.escalation.evidence_kind, 'unchanged_code_repeated_blocker');

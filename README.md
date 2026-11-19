@@ -127,11 +127,12 @@ without starting it does not fetch a frontier.
 
 ## Default configuration
 
-The checked-in [project configuration](runner-config.json) selects **Luna High**
+The checked-in [project configuration](runner-config.json) selects **GPT-6.2 Astra Max**
 for proof attempts, **two Codex workers**, and **server-only verification**.
 It admits up to **four local jobs** and **eight local plus remote jobs**, uses
 two preparation workers, and keeps Windows recovery in protected sandbox modes.
-Repeated stalled results can trigger **one Sol High rescue per stall**.
+Repeated stalled results on eligible lighter models can trigger **one Sol High rescue per stall**.
+Escalation preserves stronger configured models, including the Astra 6.2 default.
 Run settings shows the selected file and lets you change models and capacities.
 Saves persist and are shared by missions using that file. The optional
 [example configuration](runner-config.example.json) deliberately differs

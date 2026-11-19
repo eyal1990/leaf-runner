@@ -1,7 +1,7 @@
 {
   "maxActiveJobs": 4,
   "attemptModels": [
-    "luna-6-high"
+    "astra-6.2-max"
   ],
   "_comment": {
     "balanced": "promptVariant: balance complete proofs with decomposition into child theorems.",

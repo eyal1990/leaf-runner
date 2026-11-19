@@ -197,7 +197,7 @@ export function incompleteEscalation(state = {}, options = {}) {
 function strongerProfile(base, elevated) {
   if (base.model === elevated.model) return efforts.indexOf(base.reasoningEffort) >= efforts.indexOf(elevated.reasoningEffort) ? base : elevated;
   // Preserve custom/future profiles and higher configured model families.
-  const tiers = ['gpt-6-luna', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-astra'];
+  const tiers = ['gpt-6-luna', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6.2-sol', 'gpt-6-astra', 'gpt-6.2-astra'];
   const current = tiers.indexOf(base.model), next = tiers.indexOf(elevated.model);
   return current >= 0 && (next < 0 || next > current) ? elevated : base;
 }

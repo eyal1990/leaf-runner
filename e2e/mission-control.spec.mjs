@@ -57,18 +57,19 @@ test('session login, mission setup, settings persistence, and stop/save', async 
 
     await page.getByRole('button', { name: 'Run settings', exact: true }).click();
     const settings = page.getByRole('dialog', { name: 'Run settings' });
+    await expect(settings.getByRole('button', { name: /Attempt 1/ })).toHaveAccessibleName(/GPT-6.2 Astra, Max/);
     await settings.getByLabel('Prompt variant', { exact: true }).selectOption('proofOnly');
     await settings.getByLabel('Local job limit', { exact: true }).fill('12');
     await settings.getByRole('button', { name: /Attempt 1/ }).click();
     await settings.locator('#proof-models .model-name-button').click();
-    await settings.getByRole('menuitemradio', { name: 'GPT-6.1 Sol' }).click();
+    await settings.getByRole('menuitemradio', { name: 'GPT-6.2 Sol', exact: true }).click();
     await settings.getByRole('slider', { name: 'Reasoning effort' }).press('End');
     await page.keyboard.press('Escape');
     await settings.getByLabel('Incomplete-result threshold', { exact: true }).fill('4');
     await settings.getByLabel('Rescue attempt limit', { exact: true }).fill('3');
     await settings.getByRole('button', { name: /Rescue model:/ }).click();
     await settings.locator('#escalation-model .model-name-button').click();
-    await settings.getByRole('menuitemradio', { name: 'GPT-6 Astra' }).click();
+    await settings.getByRole('menuitemradio', { name: 'GPT-6.2 Astra', exact: true }).click();
     await settings.getByRole('slider', { name: 'Reasoning effort' }).press('Home');
     await page.keyboard.press('Escape');
     const save = settings.getByRole('button', { name: 'Save settings' });
@@ -77,21 +78,21 @@ test('session login, mission setup, settings persistence, and stop/save', async 
     await save.click();
     await expect(settings).not.toBeVisible();
     await expect.poll(() => json(configPath)).toMatchObject({ promptVariant: 'proofOnly', maxActiveJobs: 12,
-      attemptModels: ['sol-6.1-ultra'], incompleteEscalation: { after: 4, model: 'astra-6-low', maxAttempts: 3 } });
+      attemptModels: ['sol-6.2-ultra'], incompleteEscalation: { after: 4, model: 'astra-6.2-low', maxAttempts: 3 } });
     await page.reload();
     await page.getByRole('button', { name: 'Run settings', exact: true }).click();
     await expect(settings.getByLabel('Prompt variant', { exact: true })).toHaveValue('proofOnly');
     await expect(settings.getByLabel('Local job limit', { exact: true })).toHaveValue('12');
-    await expect(settings.getByRole('button', { name: /Attempt 1/ })).toHaveAccessibleName(/GPT-6.1 Sol, Ultra/);
+    await expect(settings.getByRole('button', { name: /Attempt 1/ })).toHaveAccessibleName(/GPT-6.2 Sol, Ultra/);
     await expect(settings.getByLabel('Incomplete-result threshold', { exact: true })).toHaveValue('4');
     await expect(settings.getByLabel('Rescue attempt limit', { exact: true })).toHaveValue('3');
-    await expect(settings.getByRole('button', { name: /Rescue model:/ })).toHaveAccessibleName(/GPT-6 Astra, Low/);
+    await expect(settings.getByRole('button', { name: /Rescue model:/ })).toHaveAccessibleName(/GPT-6.2 Astra, Low/);
     await settings.getByLabel('Incomplete-result threshold', { exact: true }).fill('0');
     await settings.getByLabel('Rescue attempt limit', { exact: true }).fill('');
     await save.click();
     await expect(settings).not.toBeVisible();
-    await expect.poll(() => json(configPath)).toMatchObject({ attemptModels: ['sol-6.1-ultra'],
-      incompleteEscalation: { after: 0, model: 'astra-6-low', maxAttempts: null } });
+    await expect.poll(() => json(configPath)).toMatchObject({ attemptModels: ['sol-6.2-ultra'],
+      incompleteEscalation: { after: 0, model: 'astra-6.2-low', maxAttempts: null } });
     await page.reload();
     await page.getByRole('button', { name: 'Run settings', exact: true }).click();
     await expect(settings.getByLabel('Incomplete-result threshold', { exact: true })).toHaveValue('0');

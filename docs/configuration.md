@@ -10,7 +10,7 @@ save, the selected file and effective settings shown in Mission Control apply.
 
 | Setting | Project default | Optional example |
 | --- | --- | --- |
-| Proof model (`attemptModels`) | `luna-6-high` — Luna High | `terra-6.1-medium` — Terra Medium |
+| Proof model (`attemptModels`) | `astra-6.2-max` — GPT-6.2 Astra Max | `terra-6.1-medium` — Terra Medium |
 | Prompt (`promptVariant`) | `balanced` | `balanced` |
 | Automatic escalation (`incompleteEscalation.after`) | `2` | `2` |
 | Rescue profile / attempt limit | `sol-6.1-high` / `1` per stall | `sol-6.1-high` / `null` (uncapped) |
@@ -62,7 +62,12 @@ keys, invalid shapes, and invalid profiles fail before credential/API work.
 
 ## Model schedules and escalation
 
-The project proof profile `luna-6-high` selects `gpt-6-luna` with High reasoning.
+The project proof profile `astra-6.2-max` selects `gpt-6.2-astra` with Max reasoning.
+GPT-6.2 Astra and GPT-6.2 Sol, released November 17, 2026, are available in the
+model picker alongside earlier versions. Astra 6.2 is the default for demanding
+mathematical work; Max gives it more time to reason about each proof. See
+[OpenAI's release announcement](https://openai.com/index/introducing-gpt-6-2-astra-sol/)
+and [model guidance](https://learn.chatgpt.com/docs/models).
 A one-entry `attemptModels` array repeats indefinitely. For example,
 `["luna-6-high", "luna-6-high", "sol-6.1-medium"]` uses Luna for lifetime attempts
 1 and 2, then Sol Medium thereafter. Numbering survives context changes and
@@ -80,6 +85,7 @@ evidence; generic refusals do not authorize a rescue. Changed code/declarations,
 an accepted outcome, or a changed relevant context returns subsequent work to
 its base schedule. Rewording, formatting, or different diagnostics alone do not.
 Changed code is a progress heuristic, not a verified mathematical improvement.
+Escalation preserves stronger configured profiles, including GPT-6.2 Astra Max.
 
 Only one automatic rescue is reserved across preparing, running, and remote
 jobs. All Sol proof invocations and explicitly configured Sol research share a
