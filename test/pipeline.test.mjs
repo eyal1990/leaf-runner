@@ -767,7 +767,8 @@ test('quota exhaustion fills the agent buffer, drains downstream work, then slee
   const logs = [], generate = h.hooks.agent, frontier = h.hooks.frontier, build = h.hooks.command;
   t.mock.method(console, 'log', message => logs.push(message));
   let now = 1800000000000, reads = 0, scans = 0, exhausted = false, available = false;
-  let idleRelease, idleCount = 0, idleDelay = 0, settled = false;
+  let pipeline, idleCount = 0, idleDelay = 0, settled = false;
+  h.hooks.onControlReady = control => { pipeline = control; };
   h.hooks.now = () => now;
   h.hooks.frontier = async (...args) => { scans++; return frontier(...args); };
   h.hooks.readCodexRateLimits = async () => {
@@ -793,9 +794,11 @@ test('quota exhaustion fills the agent buffer, drains downstream work, then slee
       h.done.has('a');
   };
   h.hooks.wait = async milliseconds => {
-    if (!settled) { await new Promise(resolve => setTimeout(resolve, 2)); return; }
+    // A quota check can wake an idle coordinator while saving its result.
+    // Count only waits after that check (including its wake) has finished.
+    if (!settled || pipeline.quotaChecking) { await new Promise(resolve => setTimeout(resolve, 2)); return; }
     idleDelay = milliseconds; idleCount++;
-    await new Promise(resolve => { idleRelease = resolve; });
+    await new Promise(() => {});
   };
   const run = h.run();
   try {
@@ -811,18 +814,15 @@ test('quota exhaustion fills the agent buffer, drains downstream work, then slee
     await new Promise(resolve => setTimeout(resolve, 30));
     assert.equal(logs.length, before.logs); assert.equal(scans, before.scans);
     assert.equal(h.workspaces.length, before.prepared); assert.equal(h.models.length, before.visits);
-    now += 30 * 60000; idleRelease();
+    now += 30 * 60000; pipeline.wake();
     await until(() => idleCount === 2 && reads === 2);
-    // The availability read increments its counter before the async state save
-    // and completion log. Wait for that completion rather than racing disk I/O.
-    await until(() => logs.slice(before.logs).some(line => String(line).includes('Codex quota checked:')));
     assert.equal(scans, before.scans, 'the hourly quota check does not trigger a graph scan');
     assert.deepEqual(logs.slice(before.logs).map(line => String(line).replace(/^\[[^\]]+\] /, '')),
       [`Codex quota checked: Codex quota exhausted; next availability check ${new Date(now + HOUR).toISOString()} (checks at least hourly)`]);
-    available = true; now += HOUR; settled = false; idleRelease();
+    available = true; now += HOUR; settled = false; pipeline.wake();
     assert.equal((await run).completed, true);
     assert.equal(new Set(h.posts).size, 6);
-  } finally { validation.release(); idleRelease?.(); h.controller.abort(new Error('cleanup')); await run.catch(() => {}); }
+  } finally { validation.release(); h.controller.abort(new Error('cleanup')); await run.catch(() => {}); }
 });
 
 test('production pipeline lets another theorem prepare, model, and validate while a server request is stalled', async t => {

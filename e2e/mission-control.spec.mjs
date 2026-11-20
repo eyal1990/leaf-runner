@@ -21,6 +21,7 @@ test('session login, mission setup, settings persistence, and stop/save', async 
     const credentialsPath = join(runs, 'credentials.json');
     await writeFile(credentialsPath, JSON.stringify({ api_key: 'browser-test-key' }));
     const control = new MissionControl({ runs, configPath, credentialsPath,
+      resolveTarget: async () => ({ kind: 'mission', name: 'Browser smoke mission', root: 'browser-root' }),
       spawnRunner: () => fork(new URL('./fixtures/runner.mjs', import.meta.url), [runs], {
         windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       }),
@@ -54,6 +55,11 @@ test('session login, mission setup, settings persistence, and stop/save', async 
     await expect(setup).not.toBeVisible();
     await expect(page.getByRole('heading', { name: 'Browser smoke mission', exact: true })).toBeVisible();
     await layout();
+
+    // Resolve the stopped mission before editing settings. Reopening retries
+    // unresolved discovery and changes the registry revision used by the form.
+    await control.refreshMissions();
+    await page.getByRole('button', { name: 'Refresh status' }).click();
 
     await page.getByRole('button', { name: 'Run settings', exact: true }).click();
     const settings = page.getByRole('dialog', { name: 'Run settings' });
@@ -147,6 +153,8 @@ test('new missions, previous missions, and stop-and-switch preserve saved runs',
     const credentialsPath = join(runs, 'credentials.json');
     await writeFile(credentialsPath, JSON.stringify({ api_key: 'browser-test-key' }));
     const control = new MissionControl({ runs, configPath, credentialsPath,
+      resolveTarget: async argv => ({ kind: 'mission', name: argv[1],
+        root: `browser-root-${argv[1].toLowerCase().replace(/[^a-z0-9]+/g, '-')}` }),
       spawnRunner: argv => fork(new URL('./fixtures/runner.mjs', import.meta.url), [runs, argv[1]], {
         windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       }),
